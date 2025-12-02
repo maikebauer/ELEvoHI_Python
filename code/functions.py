@@ -1420,6 +1420,8 @@ def elevo(R, time_array, tnum, direction, f, halfwidth, vdrag, track, availabili
     
         for k in range(timegrid):
             
+            plt.close('all')
+            
             figmov = plt.figure(figsize=(10, 10))
             backcolor = 'black'
             
@@ -1646,7 +1648,6 @@ def elevo(R, time_array, tnum, direction, f, halfwidth, vdrag, track, availabili
                 filename = prediction_path + 'ELEvoHI_HEE_m.jpg'
                 plt.savefig(filename, dpi=300, facecolor=figmov.get_facecolor(), edgecolor='none', bbox_inches='tight')
                 if not movie:
-                    figmov.clf()
                     plt.close(figmov)
                     break
     
@@ -1655,8 +1656,6 @@ def elevo(R, time_array, tnum, direction, f, halfwidth, vdrag, track, availabili
                 framestr = '%05i' % (k)
                 filename = prediction_path + '/frames/frame_' + framestr + '.jpg' 
                 plt.savefig(filename, dpi=300, facecolor=figmov.get_facecolor(), edgecolor='none', bbox_inches='tight')
-                
-                figmov.clf()
                 plt.close(figmov)
         
         if movie:
@@ -1666,6 +1665,8 @@ def elevo(R, time_array, tnum, direction, f, halfwidth, vdrag, track, availabili
                 f'-c:v libx264 -pix_fmt yuv420p -b:v 5000k -movflags +faststart '
                 f'"{prediction_path}/movie.mp4" -y'
             )
+        
+            plt.close('all')
     
    
     return prediction

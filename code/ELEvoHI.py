@@ -415,7 +415,7 @@ def main():
     venus_lat = np.deg2rad(sc_hee.lat.value)
 
     # L1
-    coord = get_horizons_coord('EM-L1', thi)
+    coord = get_horizons_coord('SEMB-L1', thi)
     sc_hee = coord.transform_to(frames.HeliocentricEarthEcliptic)  #HEE
     sc_heeq = coord.transform_to(frames.HeliographicStonyhurst) #HEEQ
         
@@ -1122,6 +1122,8 @@ def main():
 
             if det_plot:
                 det_results = prediction
+                
+            plt.close('all')
         else:
             break   
     
@@ -1231,6 +1233,7 @@ def main():
     print("ELEvoHI needed", elapsed_time, "minutes.")
     #print(np.rad2deg(det_run[0]), det_run[1], np.rad2deg(det_run[2]))
     #pdb.set_trace()
+    
         
 if __name__ == '__main__':
     main()
