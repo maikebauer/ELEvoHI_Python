@@ -399,7 +399,7 @@ def main():
     venus_lat = np.deg2rad(sc_hee.lat.value)
 
     # L1
-    coord = get_horizons_coord('EM-L1', thi)
+    coord = get_horizons_coord('SEMB-L1', thi)
     sc_hee = coord.transform_to(frames.HeliocentricEarthEcliptic)  #HEE
     sc_heeq = coord.transform_to(frames.HeliographicStonyhurst) #HEEQ
         
