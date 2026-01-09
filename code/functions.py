@@ -827,7 +827,7 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
 
     tinit = time[startfit]
     rinit = distance_km[startfit]
-    
+
     #vinit = np.nanmean(speed[startfit:startfit+4])
     if vinit_donki_cat is not None:
         print('Using DONKI category to estimate vinit.')
@@ -2110,16 +2110,16 @@ def compute_arrival(cme_r, cme_v, time_array, target_r):
 
     else:
         arr_speed_mean = [cme_v[:, 0][index_hit[0]]]
-        err_arr_speed = cme_v[:, 2][index_hit[2]] - cme_v[:, 1][index_hit[1]]
-        err_arr_time = (arr_time[1] - arr_time[2]).total_seconds() / 3600.0
+        err_arr_speed = (cme_v[:, 2][index_hit[2]] - cme_v[:, 1][index_hit[1]])/2
+        err_arr_time = ((arr_time[1] - arr_time[2]).total_seconds() / 3600.0)/2
 
         arr_time_mean = [arr_time[0]]
 
     arr_time_err_lower = [arr_time_mean[0] - timedelta(hours=err_arr_time)]
     arr_time_err_upper = [arr_time_mean[0] + timedelta(hours=err_arr_time)]
 
-    err_arr_time = [err_arr_time/2]
-    err_arr_speed = [err_arr_speed/2]
+    err_arr_time = [err_arr_time]
+    err_arr_speed = [err_arr_speed]
 
     return {
         f"arr_time_fin": arr_time_mean,
@@ -2139,12 +2139,13 @@ def assess_prediction(prediction, target, is_time, is_speed):
 # difference of prediction and in situ arrival
 # Find the row where "target" is "L1" and access the "arrival time" 
     if isinstance(is_time, datetime):
-        arrtime__target = prediction.loc[prediction['target'] == target, 'arrival time [UT]'].values[0]
+        arrtime__target = prediction['arrival time [UT]']
+
         # Convert the "arrival time" to a datetime object
         arrtime_target = pd.to_datetime(arrtime__target)
         arrival_dt = (arrtime_target - is_time).total_seconds()/3600.
         
-        prediction.loc[prediction['target'] == target, 'dt [h]'] = round(arrival_dt, 2)
+        prediction['dt [h]'] = round(arrival_dt, 2)
         
         formatted_hours = "{:.2f}".format(arrival_dt)
         
@@ -2161,10 +2162,10 @@ def assess_prediction(prediction, target, is_time, is_speed):
             print('Difference: ', formatted_hours, 'hours')
 
         if isinstance(is_speed, int):
-            arrspeed_target = prediction.loc[prediction['target'] == target, 'arrival speed [km/s]'].values[0]        
+            arrspeed_target = prediction['arrival speed [km/s]']        
             arrival_dv = arrspeed_target - is_speed
             
-            prediction.loc[prediction['target'] == target, 'dv [km/s]'] = int(round(arrival_dv))
+            prediction['dv [km/s]'] = int(round(arrival_dv))
             
             if arrival_dv < 0:
                 print('Predicted arrival speed is lower than observed.')
