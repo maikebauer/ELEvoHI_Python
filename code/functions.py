@@ -513,6 +513,8 @@ def cost_function(params, *args):
 
     return np.mean(np.abs(ydata - predicted))# * logistic_growth(ydata,0.3)/logistic_growth(ydata,0.3).max() )
 
+    return np.mean(np.abs(ydata - predicted))# * logistic_growth(ydata,0.3)/logistic_growth(ydata,0.3).max() )
+
 
 def cost_functionneg(params, *args):
     gamma = params
@@ -520,6 +522,20 @@ def cost_functionneg(params, *args):
     predicted = fitdbmneg(x, gamma, vinit, swspeed, rinit)
     #np.median(np.sqrt((ydata - predicted) ** 2 ))
     return np.mean(np.abs(ydata - predicted))
+
+def cost_function_updated(params, *args):
+    gamma, vinit = params
+    swspeed, rinit, ydata, x = args
+    predicted = fitdbm(x, gamma, vinit, swspeed, rinit)
+
+    return np.mean(np.abs((ydata - predicted)))# * logistic_growth(ydata,0.3)/logistic_growth(ydata,0.3).max() )
+
+def cost_functionneg_updated(params, *args):
+    gamma, vinit = params
+    swspeed, rinit, ydata, x = args
+    predicted = fitdbmneg(x, gamma, vinit, swspeed, rinit)
+
+    return np.mean(np.abs((ydata - predicted)))
 
 # def cost_functionneg(gamma):
 #     predicted = fitdbmneg(xdata, gamma)
@@ -564,6 +580,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
     #testy = (1/testgamma) * np.log(1 + testgamma*(vinit - testwind) * xdata) + testwind*xdata + rinit
 
     winds = np.arange(250, 775, 25)
+    winds = np.arange(250, 775, 25)
     fit = np.zeros((len(winds), len(xdata)))
     fitspeed = np.zeros((len(winds), len(xdata)))
     residuals = np.zeros((len(winds), len(xdata)))
@@ -578,6 +595,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
     for i in range(len(winds)):
         swspeed = winds[i]
         if vinit > swspeed:
+            # Perform the optimisation
             # Perform the optimisation
             result = minimize(cost_function, initial_guess,args=(vinit,swspeed,rinit,ydata,xdata), method='Nelder-Mead')
             # gamma_fit, pcov = curve_fit(fitdbm, xdata, ydata,p0=initial_guess,method="dogbox")
@@ -595,6 +613,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
                 gamma[i] = gamma_fit
                 fit[i,:] = fit_   
                 residuals[i,:] = np.abs(ydata - fit_)#np.median(np.sqrt((ydata - fit_) ** 2 ))# * logistic_growth(ydata,k)/logistic_growth(ydata,k).max())
+                residuals[i,:] = np.abs(ydata - fit_)#np.median(np.sqrt((ydata - fit_) ** 2 ))# * logistic_growth(ydata,k)/logistic_growth(ydata,k).max())
                 fitspeed[i,:] = np.gradient(fit[i,:], xdata)
                 if silent == 0:
                     print('mean_res: ', round(np.mean(residuals[i,:])/rsun, 2), 'solar radii')
@@ -607,6 +626,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
 
         else:
             # Perform the optimisation
+            # Perform the optimisation
             result = minimize(cost_functionneg, initial_guess, args=(vinit,swspeed,rinit,ydata,xdata), method='Nelder-Mead')
             if silent == 0:
                 print('=====')
@@ -615,6 +635,319 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
             # Print the fitted parameter
             if result.success:
                 gamma_fit = result.x[0]
+                if silent == 0:
+                    print(f"Fitted gamma: {round(gamma_fit*1e7, 2)} 1e-7 1/km")
+                fit_ = fitdbmneg(xdata, gamma_fit, vinit, swspeed, rinit)
+                gamma[i] = gamma_fit
+                fit[i,:] = fit_   
+                residuals[i,:] = np.abs(ydata - fit_)#np.median(np.abs(ydata - fit_)) test because the wrong wind speed is chosen
+                residuals[i,:] = np.abs(ydata - fit_)#np.median(np.abs(ydata - fit_)) test because the wrong wind speed is chosen
+                fitspeed[i,:] = np.gradient(fit[i,:], xdata)
+                if silent == 0:
+                    print('mean_res: ', round(np.mean(residuals[i,:])/rsun, 2), 'solar radii')
+                    print('-----')            
+                    print('negative')
+            else:
+                continue
+            
+    res = np.zeros(len(winds))
+
+    for i in range(len(winds)):
+        if success[i]:
+            res[i] = np.mean(residuals[i,:])#residuals[i,0] #np.mean(residuals[i,:])
+            res[i] = np.mean(residuals[i,:])#residuals[i,0] #np.mean(residuals[i,:])
+            #print(res[i]/rsun)
+        else:
+            res[i] = np.nan
+            
+    if det_plot:        
+        sns.set_context('talk')
+        sns.set_style('darkgrid')
+        figdbm, ax = plt.subplots(1, 1, figsize = (8,3), dpi = 300, facecolor='white')
+        
+    if det_plot:        
+        sns.set_context('talk')
+        sns.set_style('darkgrid')
+        figdbm, ax = plt.subplots(1, 1, figsize = (8,3), dpi = 300, facecolor='white')
+        
+
+        ax.set_title('ELEvoHI DBMfits', size = 16)
+        ax.set_ylabel('CME Apex Speed [km s$^{-1}$]', fontsize = 14, labelpad = 0)
+        ax.set_xlabel('Heliocentric Distance [R$_\odot$]', fontsize = 14, labelpad = 0)
+        ax.tick_params(axis = 'both', which = 'major', labelsize = 10, pad = -5)
+
+        norm = mpl.colors.Normalize(vmin = winds.min(), vmax = winds.max())
+        cmap = mpl.cm.ScalarMappable(norm = norm, cmap = mpl.cm.jet)
+        cmap.set_array([])
+
+        ax = plt.gca()
+        cbar = plt.colorbar(cmap, pad = 0.02, ax=ax)
+        cbar.set_label('solar wind speed [km s$^{-1}$]', rotation = 270, fontsize = 14, labelpad = 20)
+        cbar.ax.tick_params(axis='y', direction='inout', length=5, width=0, labelsize=12)
+    
+    gamma_v = []
+    res_v = []
+    winds_v = []
+    
+    print('')
+    print(f"Fits with residuals smaller than {max_residual} solar radii are used.")
+    print(f"The drag parameter is limited to be a maximum of {max_gamma} /km.")
+    print('')
+
+        
+        
+
+    residuals2 = []
+    for i in range(len(winds)):
+        if success[i] != True:
+            continue
+        if res[i]/rsun > max_residual:
+            continue
+        if gamma[i] <= 0:
+            continue
+        if max_gamma >= np.abs(gamma[i]):
+            gamma_v.append(gamma[i])
+            res_v.append(res[i]/rsun)
+            winds_v.append(winds[i])
+            if silent == 0:
+                print('------------')
+                print('Valid fit:')
+                print('i: ', i)
+                print('Gamma: ', round(gamma[i]*1e7, 2), '1e-7 1/km')
+                print('Mean Residual: ', round(res[i]/rsun, 2), 'solar radii')
+                print('Wind speed: ', winds[i])
+            if det_plot:
+                ax.plot(distance_rsun, fitspeed[i,:], label='fit', linewidth=1, c=cmap.to_rgba(winds[i]))
+        else:
+            if silent == 0:
+                print('------------')
+                print('i: ',i)
+                print('wrong gamma: ', round(gamma[i]*1e7, 2), '1e-7 1/km')
+                print(round(res[i]/rsun, 2))
+            continue
+
+    if det_plot:
+        ax.plot(distance_rsun, speed, 'o', label='data', c='black', markersize=5)
+        
+        elcon_out = pd.DataFrame({
+                "time": time,
+                "R": distance_rsun,
+                "V": speed
+            })
+        
+        elcon_out.to_csv(prediction_path + "ELCon.csv", index=False, header=["time", "heliocentric distance", "speed"])
+        
+        elcon_out = pd.DataFrame({
+                "time": time,
+                "R": distance_rsun,
+                "V": speed
+            })
+        
+        elcon_out.to_csv(prediction_path + "ELCon.csv", index=False, header=["time", "heliocentric distance", "speed"])
+        
+        # Calculate y-axis limits
+        # y_lower = min(speed) - 100
+        # y_upper = max(speed) + 100
+        
+        # Use fixed y-axis limits
+        y_lower = 0
+        y_upper = 1500
+        y_upper = 1500
+
+        # Set the y-axis limits
+        ax.set_ylim(y_lower, y_upper)
+    
+    # find the most accurate fitting parameters based on the minimum mean residual
+    
+    if len(gamma_v) != 0:
+        gamma_valid = np.array(gamma_v)   
+        res_valid = np.array(res_v)   
+        winds_valid = np.array(winds_v)   
+        min_res = np.argmin(np.abs(res_valid))
+    else:
+        print('No DBMfit possible for these model settings.')
+        gamma_valid = 0
+        winds_valid = [0,0]
+        res_valid = 0
+        tinit = 0
+        rinit = 0
+        vinit = 0
+        swspeed = 0
+        xdata = 0
+        ydata = 0
+        return gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata
+       
+    print('')
+    print('===========================================================')
+    print('|| Most accurate fitting for solar wind speed: ' + np.array2string(winds_valid[min_res]) + ' [km/s].||')
+    print('|| Resulting drag paramter: ' + np.array2string(gamma_valid[min_res]) + ' [1/km].        ||')
+    print('|| Minimum mean residual: ' + np.array2string(round(res_valid[min_res], 2)) + ' [Rsun].                    ||')
+    print('|| Initial time: ' + tinit.strftime('%Y-%m-%d %H:%M') + ' UT                      ||')
+    print('|| Initial distance: ' + np.array2string(round(rinit/rsun, 1)) + ' [Rsun].                         ||')   
+    print('|| Initial speed: ' + str(round(vinit)) + ' [km/s].                             ||')  
+    print('===========================================================')
+    print('')
+
+    # Get the indices that would sort the array based on absolute values
+    sorted_indices = np.argsort(np.abs(res_valid))
+    sorted_indices = np.argsort(np.abs(res_valid))
+    gamma_valid = gamma_valid[sorted_indices]
+    res_valid = res_valid[sorted_indices]
+    winds_valid = winds_valid[sorted_indices]
+  
+    #pdb.set_trace()
+    
+    if det_plot:
+        filename = prediction_path + '/DBMfit.png' 
+        plt.savefig(filename, dpi=300, facecolor=figdbm.get_facecolor(), edgecolor='none', bbox_inches='tight')       
+        figdbm.clf()
+        plt.close(figdbm)
+
+    
+    return gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata
+
+
+def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 0, endfit = 20, silent = 1, max_residual = 1.5, max_gamma = 2e-7, vinit_donki=None, vinit_donki_cat=None):
+    """ fit the ELCon time-distance track using the drag-based equation of motion from Vrsnak et al. (2013).
+        This is an updated version of the DBMfitting function.
+        Added:
+        - use mean of first 50 RSun for starting speed, otherwise first value
+        - use boundaries for dbm fitting (minimize)
+    """
+    global  runnumber
+
+    # start end end points of fitting.
+    # This was done manually so far, but should be implemented in a way that it is done automatically.
+    # However, it might always be necessary that a forecaster reviews the fitting because not each HI kinematics can
+    # be fitted from each startpoint on.
+
+    # startfit = 3 -> default settings
+    # endfit = 18 -> default settings
+    # Convert datetime values to seconds since the first element
+
+    distance_rsun = distance_au * AU / rsun
+
+        
+    time_num = (time - time[0]).total_seconds()
+
+    speedtime = time_num - time_num[0]
+    distance_km = distance_au * AU
+
+
+    #build time derivative from ELCon CME time-distance track
+    speed = np.gradient(distance_km, speedtime)
+    vinit_estimate = speed[startfit]
+    #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    #!!! How do we build the speed errors? In IDL this is done by the function DERIVSIG.
+    # In Python, I have no idea! -> This needs to be solved.
+    #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+    tinit = time[startfit]
+    rinit = distance_km[startfit]
+
+    if vinit_donki is not None:
+        vinit_estimate = vinit_donki
+    else:
+        #vinit = np.nanmean(speed[startfit:startfit+4])
+        if vinit_donki_cat is not None:
+            print('Using DONKI category to estimate vinit.')
+            print('DONKI category: ', vinit_donki_cat)
+            rsun_cutoff = 50 if vinit_donki_cat == 'slow' else 8.4
+        else:
+            rsun_cutoff = 50
+
+        init_inds = np.where(distance_rsun <= rsun_cutoff)[0]
+        if len(init_inds) > 0:
+            vinit_estimate = np.nanmean(speed[init_inds])
+
+        else:
+            print(f'No speed values found below {int(rsun_cutoff)} Rsun, using first value for vinit.')
+            vinit_estimate = speed[startfit]
+
+    xdata = speedtime.values
+    ydata = distance_km
+
+    fit_vinit = False
+    if fit_vinit:
+        print('Fitting vinit as well.')
+    
+    #testgamma = 1.7863506087704678e-08 
+    #testwind  = 200
+
+    #testy = (1/testgamma) * np.log(1 + testgamma*(vinit - testwind) * xdata) + testwind*xdata + rinit
+
+    winds = np.arange(250, 775, 25)
+    fit = np.zeros((len(winds), len(xdata)))
+    fitspeed = np.zeros((len(winds), len(xdata)))
+    residuals = np.zeros((len(winds), len(xdata)))
+    gamma = np.zeros(len(winds))
+    success = np.zeros(len(winds))
+    
+    # Initial guess for the parameter gamma
+    if fit_vinit:
+        initial_guess = [1e-7, vinit_estimate]
+        bnds = [(1e-10, max_gamma), (100, 3000)]
+    else:
+        initial_guess = [1e-7]
+        bnds = [(1e-10, max_gamma)]
+    #k= 0.3
+    
+    # do a fit for each wind speed separately and plot valid fits
+    for i in range(len(winds)):
+        swspeed = winds[i]
+        if vinit_estimate > swspeed:
+            # Perform the optimisation
+            if fit_vinit:
+                result = minimize(cost_function_updated, initial_guess,args=(swspeed,rinit,ydata,xdata), method='Nelder-Mead', bounds=bnds)
+            else:
+                result = minimize(cost_function, initial_guess,args=(vinit_estimate, swspeed,rinit,ydata,xdata), method='Nelder-Mead', bounds=bnds)
+            # gamma_fit, pcov = curve_fit(fitdbm, xdata, ydata,p0=initial_guess,method="dogbox")
+            # Print the fitted parameter
+            if silent == 0:
+                print('=====') 
+                print('wind: ', winds[i], 'success: ', result.success)
+            success[i] = True
+            if result.success:
+                gamma_fit = result.x[0]
+
+                if fit_vinit:
+                    vinit = result.x[1]
+                else:
+                    vinit = vinit_estimate
+                if silent == 0:
+                    print(f"Fitted gamma: {round(gamma_fit*1e7, 2)} 1e-7 1/km")
+                # fit_ = fitdbm(xdata, gamma_fit)
+                fit_ = fitdbm(xdata, gamma_fit, vinit, swspeed, rinit)
+                gamma[i] = gamma_fit
+                fit[i,:] = fit_   
+                residuals[i,:] = np.abs(ydata - fit_)#np.median(np.sqrt((ydata - fit_) ** 2 ))# * logistic_growth(ydata,k)/logistic_growth(ydata,k).max())
+                fitspeed[i,:] = np.gradient(fit[i,:], xdata)
+                if silent == 0:
+                    print('mean_res: ', round(np.mean(residuals[i,:])/rsun, 2), 'solar radii')
+                if silent == 0:
+                    print('-----')            
+                    print('positive')
+            else:
+                continue
+
+        else:
+            # Perform the optimisation
+            if fit_vinit:
+                result = minimize(cost_functionneg_updated, initial_guess, args=(swspeed,rinit,ydata,xdata), method='Nelder-Mead', bounds=bnds)
+            else:
+                result = minimize(cost_functionneg, initial_guess, args=(vinit_estimate, swspeed,rinit,ydata,xdata), method='Nelder-Mead', bounds=bnds)
+            if silent == 0:
+                print('=====')
+                print('wind: ', winds[i], 'success: ', result.success)
+            success[i] = result.success
+            # Print the fitted parameter
+            if result.success:
+                gamma_fit = result.x[0]
+
+                if fit_vinit:
+                    vinit = result.x[1]
+                else:
+                    vinit = vinit_estimate
                 if silent == 0:
                     print(f"Fitted gamma: {round(gamma_fit*1e7, 2)} 1e-7 1/km")
                 fit_ = fitdbmneg(xdata, gamma_fit, vinit, swspeed, rinit)
@@ -707,7 +1040,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
                 "V": speed
             })
         
-        elcon_out.to_csv(prediction_path + "ELCon.csv", index=False, header=["time", "heliocentric distance", "speed"])
+        # elcon_out.to_csv(prediction_path + "ELCon.csv", index=False, header=["time", "heliocentric distance", "speed"])
         
         # Calculate y-axis limits
         # y_lower = min(speed) - 100
@@ -739,17 +1072,18 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
         xdata = 0
         ydata = 0
         return gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata
-       
-    print('')
-    print('===========================================================')
-    print('|| Most accurate fitting for solar wind speed: ' + np.array2string(winds_valid[min_res]) + ' [km/s].||')
-    print('|| Resulting drag paramter: ' + np.array2string(gamma_valid[min_res]) + ' [1/km].        ||')
-    print('|| Minimum mean residual: ' + np.array2string(round(res_valid[min_res], 2)) + ' [Rsun].                    ||')
-    print('|| Initial time: ' + tinit.strftime('%Y-%m-%d %H:%M') + ' UT                      ||')
-    print('|| Initial distance: ' + np.array2string(round(rinit/rsun, 1)) + ' [Rsun].                         ||')   
-    print('|| Initial speed: ' + str(round(vinit)) + ' [km/s].                             ||')  
-    print('===========================================================')
-    print('')
+    
+    if silent == 0:
+        print('')
+        print('===========================================================')
+        print('|| Most accurate fitting for solar wind speed: ' + np.array2string(winds_valid[min_res]) + ' [km/s].||')
+        print('|| Resulting drag paramter: ' + np.array2string(gamma_valid[min_res]) + ' [1/km].        ||')
+        print('|| Minimum mean residual: ' + np.array2string(round(res_valid[min_res], 2)) + ' [Rsun].                    ||')
+        print('|| Initial time: ' + tinit.strftime('%Y-%m-%d %H:%M') + ' UT                      ||')
+        print('|| Initial distance: ' + np.array2string(round(rinit/rsun, 1)) + ' [Rsun].                         ||')   
+        print('|| Initial speed: ' + str(round(vinit)) + ' [km/s].                             ||')  
+        print('===========================================================')
+        print('')
 
     # Get the indices that would sort the array based on absolute values
     sorted_indices = np.argsort(np.abs(res_valid))
@@ -834,7 +1168,42 @@ def elevo_analytic(R, f, halfwidth, delta, runnumber, out=False, plot=False):
         if out:
             print('distance d in AU: ', dvalue)
         return dvalue
-   
+
+def elevo_analytic_new(R, f, halfwidth, delta):
+    """
+    Calculate the distance from the Sun to a point along an ellipse in the ecliptic plane, which 
+    describes the front of a solar transient. This point is specified by the angle delta 
+    between the ellipse apex and the in situ spacecraft. The ellipse is specified by 
+    the distance of the apex (R), the half width in degrees in heliospheric longitude, and the aspect ratio.
+    One of the ellipse main axes is oriented along the propagation direction, the 
+    other perpendicular to it. The aspect ratio can take any values, but physical 
+    ones suitable for CMEs cluster most likely around 1.3 +/ 0.2.
+    
+    Parameters: 
+        R (numpy.ndarray): Heliocentric distance of CME apex in AU
+        f (float): Ellipse aspect ratio (a/b)
+        halfwidth (float): Halfwidth of the ellipse
+        delta (float): Angular separation of CME apex and in situ s/c
+
+    Returns:
+        distance_earth (numpy.ndarray): Distance from Sun to point along ellipse at angle delta in AU
+        cme_a (numpy.ndarray): Semi-major axis of the ellipse in AU
+        cme_b (numpy.ndarray): Semi-minor axis of the ellipse in AU
+        cme_c (numpy.ndarray): Distance from Sun to center of ellipse in AU
+    """
+
+    theta = np.arctan(f**2 * np.tan(halfwidth))
+    omega = np.sqrt(np.cos(theta)**2 * (f**2 - 1) + 1)   
+
+    cme_b = R * omega * np.sin(halfwidth) / (np.cos(halfwidth - theta) + omega * np.sin(halfwidth))    
+    cme_a = cme_b / f
+    cme_c = R - cme_b
+        
+    root = np.sin(delta)**2 * f**2 * (cme_b**2 - cme_c**2) + np.cos(delta)**2 * cme_b**2
+    distance_earth = (cme_c * np.cos(delta) + np.sqrt(root)) / (np.sin(delta)**2 * f**2 + np.cos(delta)**2) #distance from SUN in AU for given point on ellipse
+
+    return distance_earth, cme_a, cme_b, cme_c
+
 def elevo(R, time_array, tnum, direction, f, halfwidth, vdrag, track, availability, hit_counts, delta_values, positions, HIobs, outer_system, prediction_path, det_plot, runnumber, movie=False, timegrid = 1440):
     # calculate ELEvo radial distances in direction of each target and
     # arrival times and speeds
@@ -1670,6 +2039,119 @@ def elevo(R, time_array, tnum, direction, f, halfwidth, vdrag, track, availabili
     
    
     return prediction
+
+def elevo_new(R, time_array, tnum, f, halfwidth, hit, delta_values, L1_r,L1_lon):
+    # calculate ELEvo radial distances in direction of each target and
+    # arrival times and speeds
+    
+   
+    hit_L1 = hit
+        
+    delta_L1 = delta_values
+       
+    pred = []
+    
+    # Calculate time differences needed for deriving the speeds
+    time_diff = np.diff(tnum)
+    
+
+    if hit_L1 == 1:
+
+        ############# L1 #############
+        d_L1, _, _, _ = elevo_analytic_new(R, f, halfwidth, delta_L1)
+
+        # Find the index of the closest value
+        index_L1 = np.argmin(np.abs(d_L1 - L1_r))
+
+        # arrival time at L1
+        arrtime_L1 = time_array[index_L1]
+
+        # arrival speed at L1
+        distance_diff = np.diff(d_L1*AU)
+        # TODO: Use vdrag here?
+        speed_L1 = distance_diff / time_diff
+        arrspeed_L1 = speed_L1[index_L1-1] # first element is cut off during building the time derivative
+
+        print("------------------------------------")
+        print("Arrival time at L1:", arrtime_L1.strftime("%Y-%m-%d %H:%M"))
+        print(f"Arrival speed at L1: {arrspeed_L1:.0f} km/s")
+        
+        hit = 1
+        return {"target": "L1", "arrival time [UT]": arrtime_L1.replace(second=0, microsecond=0),
+                     "arrival speed [km/s]": int(round(arrspeed_L1)), "dt [h]": np.nan, "dv [km/s]": np.nan}
+   
+    # print("------------------------------------")
+
+    return None
+
+
+def compute_arrival(cme_r, cme_v, time_array, target_r):
+    """
+    Compute arrival time and speed at a target distance given CME distance and speed profiles.
+
+    Parameters
+    ----------
+    cme_r : numpy.ndarray
+        Array of CME radial distances (AU). Shape can be (N,) or (N, 3) for mean and uncertainty bounds.
+    cme_v : numpy.ndarray
+        Array of CME speeds (km/s). Shape must match cme_r.
+    time_array : list of datetime
+        List of datetime objects corresponding to the CME distance and speed profiles.
+    target_r : float
+        Target radial distance (AU) for arrival time calculation. 
+    
+    Returns
+    -------
+    dict
+        A dictionary containing:
+        - "arr_time_fin": List of estimated arrival times (datetime).
+        - "arr_time_err0": List of lower bounds of arrival time uncertainty (datetime).
+        - "arr_time_err1": List of upper bounds of arrival time uncertainty (datetime).
+        - "arr_time_err_list": List of arrival time uncertainties in hours (float).
+        - "arr_hit": List indicating if CME hits the target (1.0 for hit).
+        - "arr_speed_list": List of estimated arrival speeds (km/s).
+        - "arr_speed_err_list": List of arrival speed uncertainties (km/s).
+    """
+
+
+    # make sure that arrays have same shape when passed to function
+    if cme_r.ndim != cme_v.ndim:
+        raise ValueError("Input arrays must have the same number of dimensions.")
+
+    index_hit = np.nanargmin(np.abs(cme_r - target_r), axis=0)    
+    arr_time = np.array(time_array)[index_hit]
+
+    if cme_r.ndim == 1:
+        arr_speed_mean = [cme_v[index_hit]]
+        err_arr_speed = 0.0
+        err_arr_time = 0.0
+
+        arr_time_mean = [arr_time]
+
+    else:
+        arr_speed_mean = [cme_v[:, 0][index_hit[0]]]
+        err_arr_speed = cme_v[:, 2][index_hit[2]] - cme_v[:, 1][index_hit[1]]
+        err_arr_time = (arr_time[1] - arr_time[2]).total_seconds() / 3600.0
+
+        arr_time_mean = [arr_time[0]]
+
+    arr_time_err_lower = [arr_time_mean[0] - timedelta(hours=err_arr_time)]
+    arr_time_err_upper = [arr_time_mean[0] + timedelta(hours=err_arr_time)]
+
+    err_arr_time = [err_arr_time/2]
+    err_arr_speed = [err_arr_speed/2]
+
+    return {
+        f"arr_time_fin": arr_time_mean,
+        f"arr_time_err0": arr_time_err_lower,
+        f"arr_time_err1": arr_time_err_upper,
+        f"arr_time_err_list": err_arr_time,
+        f"arr_hit": [1.0],
+        f"arr_speed_list": arr_speed_mean,
+        f"arr_speed_err_list": err_arr_speed,
+    }
+
+
 
 def assess_prediction(prediction, target, is_time, is_speed):
     
