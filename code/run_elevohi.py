@@ -156,7 +156,7 @@ def does_cme_hit(delta,halfwidth, tol=0.0):
 
     return np.abs(delta) < (halfwidth + tol_rad)
 
-def main(strudl_track_with_parameters_path, results_save_path, config=None, use_vinit_donki=False, use_baseline=False):
+def main(strudl_track_with_parameters_path, results_save_path, config=None, use_baseline=False):
     
     if config is None:
         tracks_times_science, tracks_elongs_science, parameters = load_strudl_tracks(strudl_track_with_parameters_path, return_parameters=True)
@@ -214,12 +214,6 @@ def main(strudl_track_with_parameters_path, results_save_path, config=None, use_
 
             num_points_f = int((config['f'][2] - config['f'][1])/config['f_step'] + 1)
             aspect_range = np.linspace(config['f'][1], config['f'][2], num_points_f)
-
-        if use_vinit_donki:
-            vinit_donki = parameters[track_num]['vinit']
-            
-        else:
-            vinit_donki = None
 
         use_vinit_donki_category = True
         if use_vinit_donki_category:
@@ -304,7 +298,7 @@ def main(strudl_track_with_parameters_path, results_save_path, config=None, use_
             R_time_arr.append(time)
 
             if use_baseline:
-                gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata = DBMfitting(time, R_elcon, startfit=0, endfit=30, prediction_path=results_save_path+str(track_num)+'_', det_plot=False,silent=1, vinit_donki=vinit_donki)
+                gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata = DBMfitting(time, R_elcon, startfit=0, endfit=30, prediction_path=results_save_path+str(track_num)+'_', det_plot=False,silent=1)
 
             else:
                 #gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata = DBMfitting_updated(time, R_elcon, startfit=0, endfit=30, prediction_path=results_save_path+str(track_num)+'_', det_plot=False,silent=1, vinit_donki=vinit_donki, vinit_donki_cat=vinit_donki_category)
@@ -354,7 +348,6 @@ def main(strudl_track_with_parameters_path, results_save_path, config=None, use_
                                                                                                                             prediction_path=prediction_path,
                                                                                                                             det_plot=False,
                                                                                                                             silent=1,
-                                                                                                                            vinit_donki=vinit_donki,
                                                                                                                             vinit_donki_cat=vinit_donki_category
                                                                                                                         )
 
@@ -583,5 +576,4 @@ if __name__ == "__main__":
             main(strudl_track_with_parameters_path=strudl_track_with_parameters_path,
                 results_save_path=results_save_path,
                 config=None,
-                use_vinit_donki=False,
                 use_baseline=use_baseline)

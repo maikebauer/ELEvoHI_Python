@@ -553,7 +553,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
     # startfit = 3 -> default settings
     # endfit = 18 -> default settings
     # Convert datetime values to seconds since the first element
-    time_num = (time - time.iloc[0]).dt.total_seconds()
+    time_num = (time - time[0]).total_seconds()
 
     speedtime = time_num - time_num[0]
     distance_km = distance_au * AU
@@ -579,7 +579,6 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
 
     #testy = (1/testgamma) * np.log(1 + testgamma*(vinit - testwind) * xdata) + testwind*xdata + rinit
 
-    winds = np.arange(250, 775, 25)
     winds = np.arange(250, 775, 25)
     fit = np.zeros((len(winds), len(xdata)))
     fitspeed = np.zeros((len(winds), len(xdata)))
@@ -613,7 +612,6 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
                 gamma[i] = gamma_fit
                 fit[i,:] = fit_   
                 residuals[i,:] = np.abs(ydata - fit_)#np.median(np.sqrt((ydata - fit_) ** 2 ))# * logistic_growth(ydata,k)/logistic_growth(ydata,k).max())
-                residuals[i,:] = np.abs(ydata - fit_)#np.median(np.sqrt((ydata - fit_) ** 2 ))# * logistic_growth(ydata,k)/logistic_growth(ydata,k).max())
                 fitspeed[i,:] = np.gradient(fit[i,:], xdata)
                 if silent == 0:
                     print('mean_res: ', round(np.mean(residuals[i,:])/rsun, 2), 'solar radii')
@@ -625,7 +623,6 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
                 continue
 
         else:
-            # Perform the optimisation
             # Perform the optimisation
             result = minimize(cost_functionneg, initial_guess, args=(vinit,swspeed,rinit,ydata,xdata), method='Nelder-Mead')
             if silent == 0:
@@ -641,7 +638,6 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
                 gamma[i] = gamma_fit
                 fit[i,:] = fit_   
                 residuals[i,:] = np.abs(ydata - fit_)#np.median(np.abs(ydata - fit_)) test because the wrong wind speed is chosen
-                residuals[i,:] = np.abs(ydata - fit_)#np.median(np.abs(ydata - fit_)) test because the wrong wind speed is chosen
                 fitspeed[i,:] = np.gradient(fit[i,:], xdata)
                 if silent == 0:
                     print('mean_res: ', round(np.mean(residuals[i,:])/rsun, 2), 'solar radii')
@@ -654,7 +650,6 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
 
     for i in range(len(winds)):
         if success[i]:
-            res[i] = np.mean(residuals[i,:])#residuals[i,0] #np.mean(residuals[i,:])
             res[i] = np.mean(residuals[i,:])#residuals[i,0] #np.mean(residuals[i,:])
             #print(res[i]/rsun)
         else:
@@ -693,9 +688,6 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
     print(f"Fits with residuals smaller than {max_residual} solar radii are used.")
     print(f"The drag parameter is limited to be a maximum of {max_gamma} /km.")
     print('')
-
-        
-        
 
     residuals2 = []
     for i in range(len(winds)):
@@ -736,15 +728,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
             })
         
         elcon_out.to_csv(prediction_path + "ELCon.csv", index=False, header=["time", "heliocentric distance", "speed"])
-        
-        elcon_out = pd.DataFrame({
-                "time": time,
-                "R": distance_rsun,
-                "V": speed
-            })
-        
-        elcon_out.to_csv(prediction_path + "ELCon.csv", index=False, header=["time", "heliocentric distance", "speed"])
-        
+
         # Calculate y-axis limits
         # y_lower = min(speed) - 100
         # y_upper = max(speed) + 100
@@ -790,7 +774,6 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
 
     # Get the indices that would sort the array based on absolute values
     sorted_indices = np.argsort(np.abs(res_valid))
-    sorted_indices = np.argsort(np.abs(res_valid))
     gamma_valid = gamma_valid[sorted_indices]
     res_valid = res_valid[sorted_indices]
     winds_valid = winds_valid[sorted_indices]
@@ -807,7 +790,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
     return gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata
 
 
-def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 0, endfit = 20, silent = 1, max_residual = 1.5, max_gamma = 2e-7, vinit_donki=None, vinit_donki_cat=None):
+def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 0, endfit = 20, silent = 1, max_residual = 1.5, max_gamma = 2e-7, vinit_donki_cat=None):
     """ fit the ELCon time-distance track using the drag-based equation of motion from Vrsnak et al. (2013).
         This is an updated version of the DBMfitting function.
         Added:
@@ -844,25 +827,22 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
 
     tinit = time[startfit]
     rinit = distance_km[startfit]
-
-    if vinit_donki is not None:
-        vinit_estimate = vinit_donki
+    
+    #vinit = np.nanmean(speed[startfit:startfit+4])
+    if vinit_donki_cat is not None:
+        print('Using DONKI category to estimate vinit.')
+        print('DONKI category: ', vinit_donki_cat)
+        rsun_cutoff = 50 if vinit_donki_cat == 'slow' else 8.4
     else:
-        #vinit = np.nanmean(speed[startfit:startfit+4])
-        if vinit_donki_cat is not None:
-            print('Using DONKI category to estimate vinit.')
-            print('DONKI category: ', vinit_donki_cat)
-            rsun_cutoff = 50 if vinit_donki_cat == 'slow' else 8.4
-        else:
-            rsun_cutoff = 50
+        rsun_cutoff = 50
 
-        init_inds = np.where(distance_rsun <= rsun_cutoff)[0]
-        if len(init_inds) > 0:
-            vinit_estimate = np.nanmean(speed[init_inds])
+    init_inds = np.where(distance_rsun <= rsun_cutoff)[0]
+    if len(init_inds) > 0:
+        vinit_estimate = np.nanmean(speed[init_inds])
 
-        else:
-            print(f'No speed values found below {int(rsun_cutoff)} Rsun, using first value for vinit.')
-            vinit_estimate = speed[startfit]
+    else:
+        print(f'No speed values found below {int(rsun_cutoff)} Rsun, using first value for vinit.')
+        vinit_estimate = speed[startfit]
 
     xdata = speedtime.values
     ydata = distance_km
