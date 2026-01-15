@@ -14,10 +14,10 @@ ELEVo/
 
 # misc files #
 *.pyc
-*.csv
 *.ipynb
 positions_from_2010_to_2030_HEEQ_10min_rad_ed.p
 DONKI.json
 test_dbm.py
 run_elevo.py
 ELEvo.py
+jplot_hi1hi2_20200414_A_s_track_5.csv
