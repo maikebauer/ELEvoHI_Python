@@ -12,6 +12,26 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy import constants as const
 import matplotlib.pyplot as plt
+import code_base.wrappers as wrappers
+from dataclasses import dataclass
+
+@dataclass
+class GeometryParams:
+    phi: float
+    halfwidth: float
+    f: float
+
+@dataclass
+class Observations:
+    L1_ist_obs: datetime.datetime
+    L1_isv_obs: float
+
+@dataclass
+class RuntimeParams:
+    prediction_path: str
+    vinit: float
+    cmeID_elevo: str
+    cmeID_strudl: str
 
 def get_target_prop(name,thi):
     coord = get_horizons_coord(name, thi)
@@ -150,620 +170,256 @@ def compute_delta(target_lon, direction):
 
     return delta
 
-def does_cme_hit_elevohi(delta, halfwidth):
-
-    if round(np.rad2deg(np.abs(delta)), 2) < round(np.rad2deg(halfwidth), 2):
-        hit = 1
-    else:
-        hit = 0
-
-    return hit
-
-def does_cme_hit(delta, halfwidth, tol=0.0):
-    tol_rad = np.deg2rad(tol)
-
-    return np.abs(delta) < (halfwidth + tol_rad)
-
 def get_constants():
     AU_in_km = const.au.to_value('km')
     rsun_in_km = const.R_sun.to_value('km')
 
     return AU_in_km, rsun_in_km
 
-def run_elevohi_baseline(track_times, track_elongs, track_parameters):
+def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
+    """
+    Unified ELEvoHI.
+    """
+
+    geom = GeometryParams(
+        phi=np.deg2rad(params["phi_manual"][0]),
+        halfwidth=np.deg2rad(params["halfwidth"][0]),
+        f=params["f"][0],
+    )
+
+    obs = Observations(
+        L1_ist_obs=params["L1_ist_obs"],
+        L1_isv_obs=params.get("L1_isv_obs"),
+    )
+
+    runtime = RuntimeParams(
+        prediction_path=params["prediction_path"],
+        vinit=params.get("vinit", None),
+        cmeID_elevo=params["cmeID_elevo"],
+        cmeID_strudl=params.get("cmeID_strudl", None),
+    )
+
 
     AU_in_km, rsun_in_km = get_constants()
 
-    f = track_parameters['f'][0]
-    halfwidth = track_parameters['halfwidth'][0]
+    phi = geom.phi
+    halfwidth = geom.halfwidth
+    f = geom.f
 
-    basic_path = track_parameters['basic_path']
-    pred_path = basic_path + 'ELEvoHI_Python/predictions/'
-    eventdate = track_parameters['eventdate']
-    HIobs = track_parameters['HIobs']
-    prediction_path = pred_path + eventdate + '_' + HIobs + '/'
+    starttime = track_times[0]
+    endtime = track_times[-1] + datetime.timedelta(minutes=1)
 
-    if not os.path.exists(prediction_path):
-        os.makedirs(prediction_path)
-
-    endtime = datetime.datetime.strptime(track_parameters['endtime'], "%Y-%m-%d %H:%M")
-    starttime = datetime.datetime.strptime(track_parameters['starttime'], "%Y-%m-%d %H:%M")
-
-    timeaxis, tracks_interpolated = interpolate_tracks(track_times, track_elongs, starttime=starttime, endtime=endtime)
+    timeaxis, elon_interp = interpolate_tracks(track_times, track_elongs, starttime=starttime, endtime=endtime)
 
     startcut = timeaxis.searchsorted(starttime)
     endcut = timeaxis.searchsorted(endtime) - 1
 
-    # ELEvoHI ensemble
-    # Define the range of values for each parameter to build the ensemble
-    if track_parameters['do_ensemble']:
-        hw_range = [track_parameters['halfwidth'][1], track_parameters['halfwidth'][2]]
-        hw_step = np.deg2rad(track_parameters['halfwidth_step'])
-        #p_range = [track_parameters['phi_manual'][1], track_parameters['phi_manual'][2]]
-        p_step = np.deg2rad(track_parameters['phi_step'])
-        f_range = [track_parameters['f'][1], track_parameters['f'][2]]
-        f_step = track_parameters['f_step']
+    if np.any(np.isnan(elon_interp)):
+        raise ValueError("NaN values in interpolated elongation track")
 
-    if track_parameters['phi_FPF']:
-        raise NotImplementedError("FPF-based phi determination not implemented in this function.")
-    
-        # fpf_fit = fpf(track, startcut, endcut, prediction_path)
-        # fpf_fit = fpf_mab(track, startcut, endcut, prediction_path)
-        # phi = fpf_fit['phi_FPF']
-        # if do_ensemble:
-        #     start_phi = np.deg2rad(fpf_fit['phi_FPF'] - track_parameters['phi_FPF_range'][0])
-        #     end_phi = np.deg2rad(fpf_fit['phi_FPF'] + track_parameters['phi_FPF_range'][1])
-        #     num_points_phi = int(round((np.rad2deg(end_phi) - np.rad2deg(start_phi))/np.rad2deg(p_step) + 1))
-        
-    else:
-        phi = track_parameters['phi_manual'][0]
-        if track_parameters['do_ensemble']:
-            start_phi = np.deg2rad(track_parameters['phi_manual'][1])    
-            end_phi = np.deg2rad(track_parameters['phi_manual'][2])
-            num_points_phi = int(round((track_parameters['phi_manual'][2] - track_parameters['phi_manual'][1])/np.rad2deg(p_step) + 1))
-
-    phi = np.deg2rad(phi)
-    halfwidth = np.deg2rad(halfwidth)
-    f = track_parameters['f'][0]
-
-    det_run = [phi, f, halfwidth]
-
-    if track_parameters['do_ensemble']:
-        start_lambda = np.deg2rad(hw_range[0])
-        end_lambda = np.deg2rad(hw_range[1])
-        num_points_lambda = int((hw_range[1] - hw_range[0])/np.rad2deg(hw_step) + 1)
-        
-        start_f = f_range[0]
-        end_f = f_range[1]
-        num_points_f = int((end_f - start_f)/f_step + 1)
-        
-        lambda_range = np.linspace(start_lambda, end_lambda, num_points_lambda)
-        phi_range = np.linspace(start_phi, end_phi, num_points_phi)
-        aspect_range = np.linspace(start_f, end_f, num_points_f)
-                
-        # Create a grid of parameter combinations
-        lambda_grid, phi_grid, f_grid = np.meshgrid(lambda_range, phi_range, aspect_range, indexing='ij')
-        
-        # Reshape the grids into arrays
-        lambda_values = lambda_grid.flatten()
-        phi_values = phi_grid.flatten()
-        f_values = f_grid.flatten()
-
-    L1_istime = track_parameters['L1_ist_obs']
-    L1_isspeed = track_parameters['L1_isv_obs']
-
-    L1_istime = datetime.datetime.strptime(L1_istime, "%Y-%m-%d %H:%M")
-    lead_time = np.round((L1_istime - endtime).total_seconds()/3600., 2)
-    
-    if np.isnan(L1_isspeed):
-        L1_isspeed = None
-
-    elon = tracks_interpolated
+    elon_rad = np.deg2rad(elon_interp)
     time = timeaxis
-
     thi = time[0]
 
-    if track_parameters['do_ensemble']:
-        print('ELEvoHI in ensemble mode.')
-        runnumber = 0
-        ensemble = pd.DataFrame()
+    sta_time, sta_r, sta_lon, _ = get_obj_heeq_pos(thi, "STEREO-A")
+    sta_r = sta_r[0]
+    sta_lon = sta_lon[0]
+
+    L1_time, L1_r, L1_lon, _ = get_obj_heeq_pos(thi, "SEMB-L1")
+    L1_r = L1_r[0]
+    L1_lon = L1_lon[0]
+
+    if sta_lon >= 0:
+        direction = sta_lon - phi
     else:
-        runnumber = 0
-        ensemble = pd.DataFrame()
-        lambda_values = np.array([np.deg2rad(track_parameters['halfwidth'][0])])
-        phi_values = np.array([np.deg2rad(track_parameters['phi_manual'][0])])
-        f_values = np.array([f])
+        direction = sta_lon + phi
 
-    # L1
-    coord = get_horizons_coord('SEMB-L1', thi)
-    sc_hee = coord.transform_to(frames.HeliocentricEarthEcliptic)  #HEE
-    sc_heeq = coord.transform_to(frames.HeliographicStonyhurst) #HEEQ
-        
-    L1_time = sc_heeq.obstime.to_datetime()
-    L1_r = sc_heeq.radius.value
-    L1_lon = np.deg2rad(sc_heeq.lon.value)
-    L1_lat = np.deg2rad(sc_heeq.lat.value)
+    delta_target = compute_delta(L1_lon, direction)
 
-    # Earth
-    coord = get_horizons_coord(399, thi)
-    sc_hee = coord.transform_to(frames.HeliocentricEarthEcliptic)  #HEE
-    sc_heeq = coord.transform_to(frames.HeliographicStonyhurst) #HEEQ
-        
-    earth_time = sc_heeq.obstime.to_datetime()
-    earth_r = sc_heeq.radius.value
-    earth_lon = np.deg2rad(sc_heeq.lon.value)
-    earth_lat = np.deg2rad(sc_heeq.lat.value)
+    hit = implementation_obj.cme_hit(delta=delta_target, halfwidth=halfwidth)
 
-    coord = get_horizons_coord('STEREO-A', thi)
-    sc_hee = coord.transform_to(frames.HeliocentricEarthEcliptic)  #HEE
-    sc_heeq = coord.transform_to(frames.HeliographicStonyhurst) #HEEQ
+    R_elcon = functions.ELCon(elon_rad, sta_r, phi, halfwidth, f)
 
-    sta_time = sc_heeq.obstime.to_datetime()
-    sta_r = sc_heeq.radius.value
-    sta_lon = np.deg2rad(sc_heeq.lon.value)
-    sta_lat = np.deg2rad(sc_heeq.lat.value)
+    dbm_result = implementation_obj.dbm_fit(
+                                            time=time,
+                                            distance_au=R_elcon,
+                                            startcut=startcut,
+                                            endcut=endcut,
+                                            prediction_path=runtime.prediction_path,
+                                            vinit=runtime.vinit
+                                        )
+
+    dfs = []
+
+    for fit_id, fit in dbm_result.fits.items():
+        if fit.is_valid:
+            gamma, winds, tinit, rinit, vinit, residual, is_valid = fit.get_parameters()
+
+        else:
+            dfs.append(pd.DataFrame())  # no valid fit
+            continue
+
+
+        time_step = datetime.timedelta(minutes=10)
+        timegrid = 1440
+
+        time_array = [tinit + i * time_step for i in range(timegrid)]
+        tnum = [(t - tinit).total_seconds() for t in time_array]
+
+        vdrag = np.zeros(timegrid)
+        rdrag = np.zeros(timegrid)
+
+        accsign = -1 if vinit < winds else 1
+
+        for i in range(timegrid):
+            rdrag[i] = (accsign / gamma * np.log(1 + accsign * gamma * (vinit - winds) * tnum[i]) + winds * tnum[i] + rinit)
+            vdrag[i] = ((vinit - winds)/ (1 + accsign * gamma * (vinit - winds) * tnum[i]) + winds)
+
+            if not np.isfinite(rdrag[i]):
+                raise ValueError("Invalid DBM kinematics")
+
+        R = rdrag / AU_in_km
+
+        pred = None
+        if hit:
+
+            pred = implementation_obj.arrival(
+                R=R,
+                vdrag=vdrag,
+                time_array=time_array,
+                tnum=tnum,
+                f=f,
+                halfwidth=halfwidth,
+                delta_target=delta_target,
+                L1_r=L1_r,
+                L1_lon=L1_lon
+            )
+
+        if pred is None:
+            return pd.DataFrame()
+
+        _, _, prediction = functions.assess_prediction(
+            pred,
+            "L1",
+            obs.L1_ist_obs,
+            obs.L1_isv_obs
+        )
+
+        df = pd.DataFrame({
+            "cmeID_elevo": [runtime.cmeID_elevo],
+            "cmeID_strudl": [runtime.cmeID_strudl],
+            "target": ["L1"],
+            "phi [°]": [round(np.rad2deg(phi))],
+            "halfwidth [°]": [round(np.rad2deg(halfwidth))],
+            "inv. aspect ratio": [round(f, 2)],
+            "tinit [UT]": [tinit.strftime("%Y-%m-%d %H:%M")],
+            "rinit [R_sun]": [round(rinit / rsun_in_km, 2)],
+            "vinit [km/s]": [round(vinit)],
+            "drag parameter [e-7/km]": [round(gamma * 1e7, 2)],
+            "solar wind speed [km/s]": [round(winds)],
+            "arrival time [UT]": prediction["arrival time [UT]"],
+            "arrival speed [km/s]": prediction["arrival speed [km/s]"],
+            "dt [h]": prediction["dt [h]"],
+            "dv [km/s]": prediction["dv [km/s]"],
+        })
+
+        dfs.append(df)
     
-    # logging runnumbers for which no DBMfit converges
-    nofit = []
+    return dfs
 
-    # variable is set to 1 in case no fit is possible for deterministic run
-    no_det_run = False
-
-    for halfwidth, phi, f in zip(lambda_values, phi_values, f_values):
-        if track_parameters['do_ensemble']:
-            print('Parameters for this ensemble member:')
-            print('phi: ', round(np.rad2deg(phi)))
-            print('halfwidth: ', round(np.rad2deg(halfwidth)))
-            print('inverse ellipse aspect ratio: ', round(f, 1))
-            runnumber = runnumber + 1
-            print('runnumber: ', runnumber)
-        else:
-            print('ELEvoHI is in single mode.')
-
-            print('phi: ', round(np.rad2deg(phi)))
-            print('halfwidth: ', round(np.rad2deg(halfwidth)))
-            print('inverse ellipse aspect ratio: ', round(f, 1))
-
-            runnumber = runnumber + 1
-            print('runnumber: ', runnumber)   
-
-        # TODO: Implement for STEREO-B
-        #STEREO Ahead
-        if track_parameters['HIobs'] == 'A':
-            d = sta_r
-            if sta_lon >=0:
-                direction = sta_lon - phi
-            else:
-                direction = sta_lon + phi      
-
-        else:
-            raise NotImplementedError("STEREO-B observations not implemented in this function.")
-            #STEREO Behind
-            # d = stb_r
-            # if stb_lon >=0:
-            #     direction = stb_lon - phi
-            # else:
-            #     direction = stb_lon + phi
-
-        if abs(direction) + abs(earth_lon) < np.pi:
-            delta_earth = direction - earth_lon
-        else:
-            delta_earth = direction - (earth_lon + 2 * np.pi * np.sign(direction))
-
-        if abs(direction) + abs(L1_lon) < np.pi:
-            delta_L1 = direction - L1_lon
-        else:
-            delta_L1 = direction - (L1_lon + 2 * np.pi * np.sign(direction))
-
-        hit_L1 = does_cme_hit_elevohi(delta_L1, halfwidth)
-
-        if not track_parameters['do_ensemble']:
-            det_plot = True
-            det_run_no = runnumber
-        else:   
-            if round(np.rad2deg(det_run[0])) == round(np.rad2deg(phi)) and round(det_run[1], 1) == round(f, 1) and round(np.rad2deg(det_run[2])) == round(np.rad2deg(halfwidth)):
-                det_plot = True
-                print('det_run set to True in ensemble!')
-                det_run_no = runnumber
-
-            else:
-                det_plot = False
-
-        elon_rad = np.deg2rad(elon)
-        R_elcon = functions.ELCon(elon_rad, d, phi, halfwidth, f)   
-
-        gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata = functions.DBMfitting(time, R_elcon, prediction_path, det_plot, startfit=startcut, endfit=endcut)
-
-        # check if DBMfit found at least one converging result
-        if winds_valid[0] == 0:
-            nofit.append(runnumber)
-            continue
-
-        # make equidistant grid for ELEvo times, with 10 min resolution
-        start_time = tinit
-
-        # Define time step as a timedelta object
-        time_step = datetime.timedelta(minutes=10)
-
-        # Define number of time steps
-        timegrid = 1440
-
-        # Generate time array
-        time_array = [start_time + i * time_step for i in range(timegrid)]
-
-        # convert to datetime
-        #time_array = [tim.to_pydatetime() for tim in time_array]
-
-        # create 1-D DBM kinematic for ellipse apex with
-        # constant drag parameter and constant background solar wind speed
-
-        gamma = gamma_valid[0]
-        winds = winds_valid[0]
-
-        # numeric time axis starting at zero
-        tnum = [(time_array[i] - start_time).total_seconds() for i in range(timegrid)]
-        # speed array
-        vdrag = np.zeros(timegrid, dtype=float)
-        # distance array
-        rdrag = np.zeros(timegrid, dtype=float)
-
-        # then use Vrsnak et al. 2013 equation 5 for v(t), 6 for r(t)
-
-        # acceleration or deceleration
-        # Note that the sign in the dbm equation is related to vinit and the ambient wind speed.
-
-        if vinit < winds:
-            accsign = -1
-            print('negative')
-        else:
-            accsign = 1
-            print('positive')
-
-        for i in range(timegrid):
-            # heliocentric distance of CME apex in km
-            rdrag[i] = (accsign / (gamma)) * np.log(1 + (accsign * (gamma) * ((vinit - winds) * tnum[i]))) + winds * tnum[i] + rinit
-            # speed in km/s
-            vdrag[i] = (vinit - winds) / (1 + (accsign * (gamma) * ((vinit - winds) * tnum[i]))) + winds
-
-            if not np.isfinite(rdrag[i]):
-                print('Sign of gamma does not fit to vinit and w!')
-                raise ValueError('Invalid value in rdrag')
-        
-        R = rdrag /AU_in_km
-
-        prediction = functions.elevo_new(R, time_array, tnum, f, halfwidth, hit_L1, delta_L1, L1_r, L1_lon)
-        
-        if prediction is not None:
-            target_l1_present = prediction['target'] == 'L1'
-
-            if type(target_l1_present) == bool:
-                target_l1_present = np.array([target_l1_present])
-
-            if target_l1_present.any():
-                dt_L1, dv_L1, prediction = functions.assess_prediction(prediction, 'L1', L1_istime, L1_isspeed)
-                any_dt_present = True
-
-            tmp_ensemble = pd.DataFrame()
-            tmp_ensemble['run no.'] = [int(runnumber)] #* len(prediction)
-            tmp_ensemble['target'] = prediction['target']
-            tmp_ensemble['apex direction (HEE)'] = round(np.rad2deg(delta_earth))
-            tmp_ensemble['phi [° from HI observer]'] = round(np.rad2deg(phi))
-            tmp_ensemble['halfwidth [°]'] = round(np.rad2deg(halfwidth))
-            tmp_ensemble['inv. aspect ratio'] = round(f, 1)
-            tmp_ensemble['startcut'] = startcut
-            tmp_ensemble['endcut'] = endcut
-            tmp_ensemble['elongation min. [°]'] = round(elon[startcut], 1)
-            tmp_ensemble['elongation max. [°]'] = round(elon[endcut], 1)
-            tmp_ensemble['tinit [UT]'] = tinit.strftime("%Y-%m-%d %H:%M")
-            tmp_ensemble['rinit [R_sun]'] = round(rinit/rsun_in_km)
-            tmp_ensemble['vinit [km/s]'] = round(vinit)
-            tmp_ensemble['drag parameter [e-7/km]'] = round(gamma*1e7, 2)
-            tmp_ensemble['solar wind speed [km/s]'] = round(winds)
-            tmp_ensemble['dec (+)/acc (-)'] = accsign
-            tmp_ensemble['arrival time [UT]'] = prediction['arrival time [UT]']
-            tmp_ensemble['arrival speed [km/s]'] = prediction['arrival speed [km/s]']
-            tmp_ensemble['dt [h]'] = prediction['dt [h]']
-            tmp_ensemble['dv [km/s]'] = prediction['dv [km/s]']
-            tmp_ensemble['cmeID_elevo'] = track_parameters['cmeID_elevo']
-            
-            if lead_time:
-                tmp_ensemble['prediction lead time [h]'] = lead_time
-            else:
-                tmp_ensemble['prediction lead time [h]'] = None
-                
-            ensemble = pd.concat([ensemble, tmp_ensemble])
-
-            ensemble.loc[ensemble['target'].isna(), 'target'] = 'No hit!'           
-
-            if det_plot:
-                det_results = prediction
-                
-            plt.close('all')
-        else:
-            print('No prediction possible for run no.: ', runnumber)
-            if det_plot:
-                no_det_run = True
-            tmp_ensemble = pd.DataFrame()
-            ensemble = pd.concat([ensemble, tmp_ensemble])
-
-
-    return ensemble
-
-
-def run_elevohi_updated(track_times, track_elongs, track_parameters):
-
-    AU_in_km, rsun_in_km = get_constants()
-
-    phi = track_parameters['phi_manual'][0]
-    halfwidth = track_parameters['halfwidth'][0]
-    f = track_parameters['f'][0]
-
-    starttime = datetime.datetime.strptime(track_times[0].strftime("%Y-%m-%d %H:%M"), "%Y-%m-%d %H:%M")
-    endtime = datetime.datetime.strptime((track_times[-1]+ datetime.timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M"), "%Y-%m-%d %H:%M") 
-
-    timeaxis, tracks_interpolated = interpolate_tracks(track_times, track_elongs, starttime=starttime, endtime=endtime)
-
-    startcut = timeaxis.searchsorted(starttime)
-    endcut = timeaxis.searchsorted(endtime) - 1
-
-    if np.any(np.isnan(tracks_interpolated)):
-        raise ValueError('NaN values in elongation track.')
-
-    phi = np.deg2rad(phi)
-    halfwidth = np.deg2rad(halfwidth)
-
-    # Create a grid of parameter combinations
-    lambda_values = np.array([np.deg2rad(track_parameters['halfwidth'][0])])
-    phi_values = np.array([np.deg2rad(track_parameters['phi_manual'][0])])
-    f_values = np.array([f])
-
-
-    elon = tracks_interpolated
-    time = timeaxis
-
-    thi = time[0]
-    time_num = [(t - thi).total_seconds() for t in time]
-    runnumber = 0
-
-    ## lets assume we dont look at data before stereoa was launched duh
-    sta_time,sta_r,sta_lon,sta_lat = get_obj_heeq_pos(thi, 'STEREO-A')
-    sta_time, sta_r, sta_lon, sta_lat = sta_time[0], sta_r[0], sta_lon[0], sta_lat[0]
-
-    ## lets get L1 position etc.. for the first time of track
-    L1_time,L1_r,L1_lon,L1_lat = get_obj_heeq_pos(thi, 'SEMB-L1')
-    L1_time, L1_r, L1_lon, L1_lat = L1_time[0], L1_r[0], L1_lon[0], L1_lat[0]
-    ensemble = pd.DataFrame()
-
-    predictions = []
-
-    det_run_no = 0
-
-    R_Elcon_arr = []
-    R_time_arr = []
-
-    for halfwidth, phi, f in zip(lambda_values, phi_values, f_values):
-
-        d = sta_r
-        if sta_lon >=0:
-            direction = sta_lon - phi
-
-        else:
-            direction = sta_lon + phi
-
-
-        delta_target = compute_delta(L1_lon, direction)
-        delta_sta    = compute_delta(sta_lon, direction)
-        hit = does_cme_hit_elevohi(delta_target,halfwidth)
-
-        elon_rad = np.deg2rad(elon)
-        R_elcon = functions.ELCon(elon_rad, d, phi, halfwidth, f)   
-
-        ## run DBMfitting    
-
-        R_Elcon_arr.append(R_elcon)
-        R_time_arr.append(time)
-
-        gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata = functions.DBMfitting(time,
-                                                                                                             R_elcon,
-                                                                                                             startfit=startcut,
-                                                                                                             endfit=endcut,
-                                                                                                             prediction_path=track_parameters['prediction_path'],
-                                                                                                             det_plot=False,
-                                                                                                             silent=1)
-
-        if(winds_valid[0]==0):
-            continue
-
-        start_time = tinit
-
-        # Define time step as a timedelta object
-        time_step = datetime.timedelta(minutes=10)
-
-        timegrid = 1440
-
-        # Generate time array
-        time_array = [start_time + i * time_step for i in range(timegrid)]
-        
-        # convert to datetime
-        #time_array = [tim.to_pydatetime() for tim in time_array]
-
-        # create 1-D DBM kinematic for ellipse apex with
-        # constant drag parameter and constant background solar wind speed
-        tnum = [(time_array[i] - start_time).total_seconds() for i in range(timegrid)]
-        
-        # create 1-D DBM kinematic for ellipse apex with
-        # constant drag parameter and constant background solar wind speed
-
-        gamma = gamma_valid[0]
-        winds = winds_valid[0]
-
-        # speed array
-        vdrag = np.zeros(timegrid, dtype=float)
-        # distance array
-        rdrag = np.zeros(timegrid, dtype=float)
-
-        if vinit < winds:
-            accsign = -1
-            #print('negative')
-        else:
-            accsign = 1
-            #print('positive')
-
-        for i in range(timegrid):
-            # heliocentric distance of CME apex in km
-            rdrag[i] = (accsign / (gamma)) * np.log(1 + (accsign * (gamma) * ((vinit - winds) * tnum[i]))) + winds * tnum[i] + rinit
-            # speed in km/s
-            vdrag[i] = (vinit - winds) / (1 + (accsign * (gamma) * ((vinit - winds) * tnum[i]))) + winds
-
-            if not np.isfinite(rdrag[i]):
-                print('Sign of gamma does not fit to vinit and w!')
-                raise ValueError('Invalid value in rdrag')
-        
-        # ########################################################################
-        # # run the final prediction using ELEvo   
-        
-        R = rdrag /AU_in_km
-
-        if hit == False:
-            pred = None
-
-        else:
-            # computed_arrival = functions.compute_arrival(R, vdrag, time_array, L1_r)
-            # pred = {"target": "L1",
-            #         "arrival time [UT]": computed_arrival['arr_time_fin'][0].replace(second=0, microsecond=0),
-            #         "arrival speed [km/s]": int(round(computed_arrival['arr_speed_list'][0])),
-            #         "dt [h]": np.nan,
-            #         "dv [km/s]": np.nan}
-
-            pred = functions.elevo_new(R, time_array, tnum, f, halfwidth, 1, delta_target, L1_r, L1_lon)
-
-
-        if pred is not None:
-            arrival_dt, arrival_dv, prediction = functions.assess_prediction(pred, 'L1', track_parameters['L1_ist_obs'], track_parameters['L1_isv_obs'])
-            
-            formatted_drag = "{:.2f}".format(gamma*1e7)
-
-            predictions.append(pred)
-            tmp_ensemble = pd.DataFrame()
-            tmp_ensemble['cmeID_elevo'] = [track_parameters['cmeID_elevo'].replace(':','_').replace('-','_')]
-            tmp_ensemble['cmeID_strudl'] = [track_parameters['cmeID_strudl']]
-            tmp_ensemble['run no.'] = [int(det_run_no+1)]
-            tmp_ensemble['target'] = "L1"
-            tmp_ensemble['apex direction (HEE)'] = round(np.rad2deg(delta_target))
-            tmp_ensemble['phi [° from HI observer]'] = round(np.rad2deg(phi))
-            tmp_ensemble['halfwidth [°]'] = round(np.rad2deg(halfwidth))
-            tmp_ensemble['inv. aspect ratio'] = round(f, 1)
-            tmp_ensemble['startcut'] = 0
-            tmp_ensemble['endcut'] = 30
-            tmp_ensemble['elongation min. [°]'] = round(elon[0], 1)
-            tmp_ensemble['elongation max. [°]'] = round(elon[-1], 1)
-            tmp_ensemble['tinit [UT]'] = tinit.strftime("%Y-%m-%d %H:%M")
-            tmp_ensemble['rinit [R_sun]'] = round(rinit/rsun_in_km)
-            tmp_ensemble['vinit [km/s]'] = round(vinit)
-            tmp_ensemble['drag parameter [e-7/km]'] = round(gamma*1e7, 2)
-            tmp_ensemble['solar wind speed [km/s]'] = round(winds)
-            tmp_ensemble['dec (+)/acc (-)'] = accsign
-            tmp_ensemble['arrival time [UT]'] = prediction['arrival time [UT]']
-            tmp_ensemble['arrival speed [km/s]'] = prediction['arrival speed [km/s]']
-            tmp_ensemble['dt [h]'] = prediction['dt [h]']
-            tmp_ensemble['dv [km/s]'] = prediction['dv [km/s]']
-            ensemble = pd.concat([ensemble, tmp_ensemble])
-            print('Prediction done for run no.: ', track_parameters['cmeID_strudl'])
-        else:
-            print('No prediction possible for run no.: ', track_parameters['cmeID_strudl'])
-
-    return ensemble
-
-def main(strudl_track_with_parameters_path, results_save_path, config=None, use_baseline=False):
+def main_new(strudl_track_with_parameters_path, results_save_path, impl=None, config=None):
 
     all_ensembles = pd.DataFrame()
+    no_pred_possible = 0
 
     if config is None:
-        tracks_times_science, tracks_elongs_science, parameters = load_strudl_tracks(strudl_track_with_parameters_path, return_parameters=True)
+        tracks_times_science, tracks_elongs_science, parameters = load_strudl_tracks(
+            strudl_track_with_parameters_path,
+            return_parameters=True
+        )
+
     else:
-        event_path =  '/Users/maikebauer/Code/ELEvoHI_Python/data/timestep/'
-        files = sorted([file for file in os.listdir(event_path) if file.endswith('.csv')])
+        event_path = "/Users/maikebauer/Code/ELEvoHI_Python/data/timestep/"
+        files = sorted([f for f in os.listdir(event_path) if f.endswith(".csv")])
 
         tracks_times_science = []
         tracks_elongs_science = []
-
         file_configs = []
+
         for file in files:
             df = pd.read_csv(event_path + file)
-            tracks_times_science.append(pd.to_datetime(df['TRACK_DATE'].values))
-            tracks_elongs_science.append(df['ELON'].values)
-            file_configs.append(event_path + 'config/' + file.replace('.csv', '.json').replace('track_', 'config_'))
+            tracks_times_science.append(pd.to_datetime(df["TRACK_DATE"].values))
+            tracks_elongs_science.append(df["ELON"].values)
+            file_configs.append(
+                event_path + "config/" +
+                file.replace(".csv", ".json").replace("track_", "config_")
+            )
 
-    if use_baseline:
-        baseline_suffix = 'baseline'
-    else:
-        baseline_suffix = 'updated'
-
-    no_pred_possible = 0
 
     for track_num, track in enumerate(tracks_times_science):
 
-        prediction_path = results_save_path+str(track_num)+'_'
+        prediction_path = results_save_path + f"{track_num}_"
 
         if config is None:
-            cmeID_elevo = parameters[track_num]['cmeID_elevo']
-            cmeID_strudl = parameters[track_num]['cmeID_strudl']
+            cmeID_elevo = parameters[track_num]["cmeID_elevo"]
+            cmeID_strudl = parameters[track_num]["cmeID_strudl"]
 
-            print('Processing STRUDL ID: ', cmeID_strudl, ' ELEvo ID: ', cmeID_elevo)
-
-            use_vinit_donki_category = True
-
-            if use_vinit_donki_category:
-                vinit_donki_category = parameters[track_num]['vinit']
-                if vinit_donki_category > 900:
-                    vinit_donki_category = 'fast'
-                else:
-                    vinit_donki_category = 'slow'
-            else:
-                vinit_donki_category = None
+            print("Processing STRUDL ID:", cmeID_strudl,
+                  "ELEvo ID:", cmeID_elevo)
 
             parameters_track = {
-                        'halfwidth': [parameters[track_num]['halfwidth']]*3,
-                        'halfwidth_step': np.nan,
-                        'phi_manual': [parameters[track_num]['phi']]*3,
-                        'phi_step': np.nan,
-                        'f':[0.7, 0.7 ,0.7],
-                        'f_step': np.nan,
-                        'phi_FPF_range': np.nan,
-                        'L1_ist_obs': parameters[track_num]['L1_ist_obs'],
-                        "startcut": 'start',
-                        "endcut": 'end',
-                        "L1_isv_obs": 999,
-                        "cmeID_elevo": cmeID_elevo,
-                        "cmeID_strudl": cmeID_strudl,
-                        "do_ensemble": False,
-                        "phi_FPF": False,
-                        "prediction_path": prediction_path,
-                        "HIobs": 'A',
-                        "vinit_donki_category": vinit_donki_category
-                    }  
+                "halfwidth": [parameters[track_num]["halfwidth"]] * 3,
+                "halfwidth_step": np.nan,
+                "phi_manual": [parameters[track_num]["phi"]] * 3,
+                "phi_step": np.nan,
+                "f": [0.7, 0.7, 0.7],
+                "f_step": np.nan,
+                "phi_FPF_range": np.nan,
+                "L1_ist_obs": parameters[track_num]["L1_ist_obs"],
+                "L1_isv_obs": 999,
+                "cmeID_elevo": cmeID_elevo,
+                "cmeID_strudl": cmeID_strudl,
+                "do_ensemble": False,
+                "phi_FPF": False,
+                "prediction_path": prediction_path,
+                "HIobs": "A",
+                "vinit": parameters[track_num]["vinit"],
+            }
 
         else:
             parameters_track = functions.load_config(file_configs[track_num])
-            parameters_track['cmeID_elevo'] = file_configs[track_num].split('/')[-1].replace('config_', '').replace('.json', '')
-            print('Processing ELEvo ID: ', parameters_track['cmeID_elevo'])
+            parameters_track["cmeID_elevo"] = file_configs[track_num].split("/")[-1].replace("config_", "").replace(".json", "")
+            parameters_track["prediction_path"] = prediction_path
+            parameters_track["vinit"] = None
+            parameters_track["L1_ist_obs"] = datetime.datetime.strptime(parameters_track["L1_ist_obs"], "%Y-%m-%d %H:%M")
 
-        if use_baseline:
-            ensemble = run_elevohi_baseline(track, tracks_elongs_science[track_num], parameters_track)
-        else:
-            ensemble = run_elevohi_updated(track, tracks_elongs_science[track_num], parameters_track)
+        ensemble = run_elevohi_new(
+            track_times=track,
+            track_elongs=tracks_elongs_science[track_num],
+            params=parameters_track,
+            implementation_obj=impl,
+        )
 
-        if ensemble.empty:
-            print('No valid ensemble members for track number: ', track_num)
+        valid_ensemble = False
+        for ens in ensemble:
+            if ens.empty:
+                continue
+            else:
+                valid_ensemble = True
+                all_ensembles = pd.concat([all_ensembles, ens])
+
+        if not valid_ensemble:
+            print("No valid ensemble members for track number:", track_num)
             no_pred_possible += 1
             continue
 
-        all_ensembles = pd.concat([all_ensembles, ensemble])
+    return all_ensembles, no_pred_possible, track_num + 1
 
-        
-
-    return all_ensembles, no_pred_possible, track_num+1
-
+def make_implementation(use_baseline, setup_config):
+    if use_baseline:
+        return wrappers.BaselineImplementation()
+    
+    return wrappers.UpdatedImplementation(setup_config)
 
 if __name__ == "__main__":
     
@@ -780,13 +436,25 @@ if __name__ == "__main__":
     for bnum, use_baseline in enumerate(baselines):
         if use_baseline:
             config = True
+            setup_config = None
+
         else:
             config = None
 
-        ensemble, no_pred, no_total = main(strudl_track_with_parameters_path=strudl_track_with_parameters_path,
+            setup_config = {
+                "use_dbm_updated": True,
+                "use_vinit_donki_category": False,
+                "use_cme_hit_function_updated": True,
+                "use_arrival_computation_updated": True,
+                "allow_multiple_dbm_fits": True
+            }
+        
+        impl = make_implementation(use_baseline, setup_config)
+
+        ensemble, no_pred, no_total = main_new(strudl_track_with_parameters_path=strudl_track_with_parameters_path,
             results_save_path=results_save_path,
-            config=config,
-            use_baseline=use_baseline)
+            impl=impl,
+            config=config)
                 
         results.append({'dt [h]': ensemble['dt [h]'].abs().mean(),
                         'dv [km/s]': ensemble['dv [km/s]'].abs().mean(),

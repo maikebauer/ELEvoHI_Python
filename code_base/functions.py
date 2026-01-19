@@ -22,6 +22,7 @@ import sys
 import pdb
 import gc
 import copy
+from dataclasses import dataclass
 
 # Constants
 AU = const.au.to_value('km')
@@ -750,15 +751,15 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
         min_res = np.argmin(np.abs(res_valid))
     else:
         print('No DBMfit possible for these model settings.')
-        gamma_valid = 0
-        winds_valid = [0,0]
-        res_valid = 0
+        gamma_valid = [0]
+        winds_valid = [0]
+        res_valid = [0]
         tinit = 0
         rinit = 0
         vinit = 0
         swspeed = 0
-        xdata = 0
-        ydata = 0
+        xdata = [0]
+        ydata = [0]
         return gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata
        
     print('')
@@ -790,7 +791,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
     return gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata
 
 
-def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 0, endfit = 20, silent = 1, max_residual = 1.5, max_gamma = 2e-7, vinit_donki_cat=None):
+def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 0, endfit = 20, silent = 1, max_residual = 1.5, max_gamma = 2e-7, use_vinit_donki_cat=False, vinit_input=None):
     """ fit the ELCon time-distance track using the drag-based equation of motion from Vrsnak et al. (2013).
         This is an updated version of the DBMfitting function.
         Added:
@@ -819,7 +820,6 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
 
     #build time derivative from ELCon CME time-distance track
     speed = np.gradient(distance_km, speedtime)
-    vinit_estimate = speed[startfit]
     #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     #!!! How do we build the speed errors? In IDL this is done by the function DERIVSIG.
     # In Python, I have no idea! -> This needs to be solved.
@@ -828,11 +828,22 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
     tinit = time[startfit]
     rinit = distance_km[startfit]
 
-    #vinit = np.nanmean(speed[startfit:startfit+4])
-    if vinit_donki_cat is not None:
-        print('Using DONKI category to estimate vinit.')
-        print('DONKI category: ', vinit_donki_cat)
-        rsun_cutoff = 50 if vinit_donki_cat == 'slow' else 8.4
+    if use_vinit_donki_cat:
+        if vinit_input is None:
+            raise ValueError("vinit_input must be provided when use_vinit_donki_cat=True")
+
+        else:
+            print('Using DONKI category to estimate vinit.')
+
+            if vinit_input > 900:
+                vinit_donki_cat = 'fast'
+            else:
+                vinit_donki_cat = 'slow'
+
+            print('DONKI category: ', vinit_donki_cat)
+
+            rsun_cutoff = 50 if vinit_donki_cat == 'slow' else 8.4
+
     else:
         rsun_cutoff = 50
 
@@ -1042,15 +1053,15 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
         min_res = np.argmin(np.abs(res_valid))
     else:
         print('No DBMfit possible for these model settings.')
-        gamma_valid = 0
-        winds_valid = [0,0]
-        res_valid = 0
+        gamma_valid = [0]
+        winds_valid = [0]
+        res_valid = [0]
         tinit = 0
         rinit = 0
         vinit = 0
         swspeed = 0
-        xdata = 0
-        ydata = 0
+        xdata = [0]
+        ydata = [0]
         return gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata
     
     if silent == 0:
@@ -2130,7 +2141,17 @@ def compute_arrival(cme_r, cme_v, time_array, target_r):
         f"arr_speed_err_list": err_arr_speed,
     }
 
+def compute_arrival_wrapper(R, vdrag, time_array, L1_r):
 
+    computed_arrival = compute_arrival(R, vdrag, time_array, L1_r)
+
+    pred = {"target": "L1",
+            "arrival time [UT]": computed_arrival['arr_time_fin'][0].replace(second=0, microsecond=0),
+            "arrival speed [km/s]": int(round(computed_arrival['arr_speed_list'][0])),
+            "dt [h]": np.nan,
+            "dv [km/s]": np.nan}
+    
+    return pred
 
 def assess_prediction(prediction, target, is_time, is_speed):
     
@@ -2250,3 +2271,17 @@ def assess_ensemble(ensemble, det_results, det_run_no, no_det_run):
     #pdb.set_trace()
     
     return ensemble_results
+
+def does_cme_hit_elevohi(delta, halfwidth):
+
+    if round(np.rad2deg(np.abs(delta)), 2) < round(np.rad2deg(halfwidth), 2):
+        hit = 1
+    else:
+        hit = 0
+
+    return hit
+
+def does_cme_hit(delta, halfwidth, tol=0.0):
+    tol_rad = np.deg2rad(tol)
+
+    return np.abs(delta) < (halfwidth + tol_rad)
