@@ -15,24 +15,6 @@ import matplotlib.pyplot as plt
 import code_base.wrappers as wrappers
 from dataclasses import dataclass
 
-@dataclass
-class GeometryParams:
-    phi: float
-    halfwidth: float
-    f: float
-
-@dataclass
-class Observations:
-    L1_ist_obs: datetime.datetime
-    L1_isv_obs: float
-
-@dataclass
-class RuntimeParams:
-    prediction_path: str
-    vinit: float
-    cmeID_elevo: str
-    cmeID_strudl: str
-
 def get_target_prop(name,thi):
     coord = get_horizons_coord(name, thi)
     # sc_hee = coord.transform_to(frames.HeliocentricEarthEcliptic)  #HEE
@@ -180,31 +162,19 @@ def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
     """
     Unified ELEvoHI.
     """
-
-    geom = GeometryParams(
-        phi=np.deg2rad(params["phi_manual"][0]),
-        halfwidth=np.deg2rad(params["halfwidth"][0]),
-        f=params["f"][0],
-    )
-
-    obs = Observations(
-        L1_ist_obs=params["L1_ist_obs"],
-        L1_isv_obs=params.get("L1_isv_obs"),
-    )
-
-    runtime = RuntimeParams(
-        prediction_path=params["prediction_path"],
-        vinit=params.get("vinit", None),
-        cmeID_elevo=params["cmeID_elevo"],
-        cmeID_strudl=params.get("cmeID_strudl", None),
-    )
-
-
     AU_in_km, rsun_in_km = get_constants()
 
-    phi = geom.phi
-    halfwidth = geom.halfwidth
-    f = geom.f
+    phi = np.deg2rad(params["phi_manual"][0])
+    halfwidth = np.deg2rad(params["halfwidth"][0])
+    f = params["f"][0]
+
+    L1_ist_obs = params["L1_ist_obs"]
+    L1_isv_obs = params.get("L1_isv_obs", None)
+
+    prediction_path = params["prediction_path"]
+    vinit = params['vinit']
+    cmeID_elevo = params["cmeID_elevo"]
+    cmeID_strudl = params.get("cmeID_strudl", None)
 
     starttime = track_times[0]
     endtime = track_times[-1] + datetime.timedelta(minutes=1)
@@ -245,8 +215,8 @@ def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
                                             distance_au=R_elcon,
                                             startcut=startcut,
                                             endcut=endcut,
-                                            prediction_path=runtime.prediction_path,
-                                            vinit=runtime.vinit
+                                            prediction_path=prediction_path,
+                                            vinit=vinit
                                         )
 
     dfs = []
@@ -301,13 +271,13 @@ def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
         _, _, prediction = functions.assess_prediction(
             pred,
             "L1",
-            obs.L1_ist_obs,
-            obs.L1_isv_obs
+            L1_ist_obs,
+            L1_isv_obs
         )
 
         df = pd.DataFrame({
-            "cmeID_elevo": [runtime.cmeID_elevo],
-            "cmeID_strudl": [runtime.cmeID_strudl],
+            "cmeID_elevo": [cmeID_elevo],
+            "cmeID_strudl": [cmeID_strudl],
             "target": ["L1"],
             "phi [°]": [round(np.rad2deg(phi))],
             "halfwidth [°]": [round(np.rad2deg(halfwidth))],
