@@ -1,5 +1,6 @@
 import pytest
 import pandas as pd
+import datetime
 
 @pytest.fixture
 def load_test_post_conjunction_run_elevohi_baseline():
@@ -36,14 +37,16 @@ def load_test_post_conjunction_run_elevohi_baseline():
                         42.
                         ],
                         "halfwidth_step": 5,
-                        "starttime": "2024-07-27 13:00",
-                        "endtime": "2024-07-27 23:59",
+                        "starttime": datetime.datetime.strptime("2024-07-27 13:00", "%Y-%m-%d %H:%M"),
+                        "endtime": datetime.datetime.strptime("2024-07-27 23:59", "%Y-%m-%d %H:%M"),
                         "outer_system": False,
                         "movie": False,
                         "silent": False,
-                        "L1_ist_obs": "2024-07-29 19:13",
+                        "L1_ist_obs": datetime.datetime.strptime("2024-07-29 19:13", "%Y-%m-%d %H:%M"),
                         "L1_isv_obs": 999,
-                        "cmeID_elevo": "2024_07_27T06_36_00_CME_001"
+                        "cmeID_elevo": "2024_07_27T06_36_00_CME_001",
+                        "vinit": None,
+                        "prediction_path": ""
                         }
 
     tracks_times = []
@@ -64,13 +67,14 @@ def load_test_post_conjunction_run_elevohi_baseline():
 def test_run_elevohi_baseline(input, request):
     tracks_times, tracks_elongs, post_conj_config, expected_dt, expected_dv = request.getfixturevalue(input)
 
-    from code_base.run_elevohi import run_elevohi_baseline
+    from code_base.run_elevohi import run_elevohi_new, make_implementation
 
-    ensemble = run_elevohi_baseline(tracks_times[0], tracks_elongs[0], post_conj_config)
+    impl = make_implementation(use_baseline=True, setup_config=None)
+    ensemble = run_elevohi_new(tracks_times[0], tracks_elongs[0], post_conj_config, impl)
 
-    dt = ensemble['dt [h]'].values[0]
-    dv = ensemble['dv [km/s]'].values[0]
-
+    dt = ensemble[0]['dt [h]'].values[0]
+    dv = ensemble[0]['dv [km/s]'].values[0]
+    
     tol_hours = 0.001
     tol_kms = 0.1
 

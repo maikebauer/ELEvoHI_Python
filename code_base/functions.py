@@ -2201,8 +2201,13 @@ def assess_prediction(prediction, target, is_time, is_speed):
     else:
             arrival_dt = np.nan
             arrival_dv = np.nan
-            
-    return round(arrival_dt,2), int(round(arrival_dv)), prediction
+    
+    if not np.isnan(arrival_dt):
+        arrival_dt = round(arrival_dt,2)
+    if not np.isnan(arrival_dv):
+        arrival_dv = int(round(arrival_dv))
+
+    return arrival_dt, arrival_dv, prediction
 
 def assess_ensemble(ensemble, det_results, det_run_no, no_det_run):
     

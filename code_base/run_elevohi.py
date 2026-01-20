@@ -176,8 +176,16 @@ def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
     cmeID_elevo = params["cmeID_elevo"]
     cmeID_strudl = params.get("cmeID_strudl", None)
 
-    starttime = track_times[0]
-    endtime = track_times[-1] + datetime.timedelta(minutes=1)
+    if params.get("starttime", None) is None:
+        starttime = track_times[0]
+    
+    else:
+        starttime = params["starttime"]
+
+    if params.get("endtime", None) is None:
+        endtime = track_times[-1] + datetime.timedelta(minutes=1)
+    else:
+        endtime = params["endtime"]
 
     timeaxis, elon_interp = interpolate_tracks(track_times, track_elongs, starttime=starttime, endtime=endtime)
 
@@ -362,6 +370,8 @@ def main_new(strudl_track_with_parameters_path, results_save_path, impl=None, co
             parameters_track["prediction_path"] = prediction_path
             parameters_track["vinit"] = None
             parameters_track["L1_ist_obs"] = datetime.datetime.strptime(parameters_track["L1_ist_obs"], "%Y-%m-%d %H:%M")
+            parameters_track['starttime'] = datetime.datetime.strptime(parameters_track['starttime'], "%Y-%m-%d %H:%M")
+            parameters_track['endtime'] = datetime.datetime.strptime(parameters_track['endtime'], "%Y-%m-%d %H:%M")
 
         ensemble = run_elevohi_new(
             track_times=track,
@@ -412,11 +422,11 @@ if __name__ == "__main__":
             config = None
 
             setup_config = {
-                "use_dbm_updated": True,
+                "use_dbm_updated": False,
                 "use_vinit_donki_category": False,
-                "use_cme_hit_function_updated": True,
-                "use_arrival_computation_updated": True,
-                "allow_multiple_dbm_fits": True
+                "use_cme_hit_function_updated": False,
+                "use_arrival_computation_updated": False,
+                "allow_multiple_dbm_fits": False
             }
         
         impl = make_implementation(use_baseline, setup_config)
