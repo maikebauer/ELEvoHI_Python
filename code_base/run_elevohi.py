@@ -86,7 +86,7 @@ def load_strudl_tracks(path, return_parameters=False):
     for cme_key in converted_strudl_dict.keys():
         
         times.append([pd.to_datetime(d) for d in converted_strudl_dict[cme_key]["time"]])
-        elongs.append(list(converted_strudl_dict[cme_key]["elongation"]))
+        elongs.append(np.array(list(converted_strudl_dict[cme_key]["elongation"])))
 
         if return_parameters:
             phi = converted_strudl_dict[cme_key]["phi"]
@@ -124,12 +124,12 @@ def combine_tracks(track_times,track_elongs):
 def interpolate_tracks(track_times,track_elongs,starttime=None,endtime=None):
 
     if starttime is None:
-        min_time = min(track_times)
+        min_time = min(track_times).replace(second=0, microsecond=0)
     else:
         min_time = starttime
 
     if endtime is None:
-        max_time = max(track_times)
+        max_time = max(track_times).replace(second=0, microsecond=0)
     else:
         max_time = endtime
 
@@ -177,13 +177,12 @@ def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
     cmeID_strudl = params.get("cmeID_strudl", None)
 
     if params.get("starttime", None) is None:
-        starttime = track_times[0]
-    
+        starttime = track_times[0].replace(second=0, microsecond=0)
     else:
         starttime = params["starttime"]
 
     if params.get("endtime", None) is None:
-        endtime = track_times[-1] + datetime.timedelta(minutes=1)
+        endtime = track_times[-1].replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
     else:
         endtime = params["endtime"]
 
@@ -223,8 +222,7 @@ def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
                                             distance_au=R_elcon,
                                             startcut=startcut,
                                             endcut=endcut,
-                                            prediction_path=prediction_path,
-                                            vinit=vinit
+                                            prediction_path=prediction_path
                                         )
 
     dfs = []
@@ -232,36 +230,29 @@ def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
     for fit_id, fit in dbm_result.fits.items():
         if fit.is_valid:
             gamma, winds, tinit, rinit, vinit, residual, is_valid = fit.get_parameters()
-
+            
         else:
             dfs.append(pd.DataFrame())  # no valid fit
             continue
-
-
-        time_step = datetime.timedelta(minutes=10)
-        timegrid = 1440
-
-        time_array = [tinit + i * time_step for i in range(timegrid)]
-        tnum = [(t - tinit).total_seconds() for t in time_array]
-
-        vdrag = np.zeros(timegrid)
-        rdrag = np.zeros(timegrid)
-
-        accsign = -1 if vinit < winds else 1
-
-        for i in range(timegrid):
-            rdrag[i] = (accsign / gamma * np.log(1 + accsign * gamma * (vinit - winds) * tnum[i]) + winds * tnum[i] + rinit)
-            vdrag[i] = ((vinit - winds)/ (1 + accsign * gamma * (vinit - winds) * tnum[i]) + winds)
-
-            if not np.isfinite(rdrag[i]):
-                raise ValueError("Invalid DBM kinematics")
-
-        R = rdrag / AU_in_km
+        
+        # TODO: Insert elevo ensemble option here
+        # should take gamma, wind, timesteps, rinit and vinit from dbm fit
+        # should return arrays of rdrag and vdrag for the given time steps
+        # gamma, winds, and vinit should be part of a distribution as in elevo ensembles
+        # should be single values for regular elevohi run
+        R, vdrag, time_array, tnum = implementation_obj.dbm_kinematics(
+            gamma=gamma,
+            winds=winds,
+            tinit=tinit,
+            rinit=rinit,
+            vinit=vinit
+        )
+        # R, vdrag, time_array, tnum = functions.compute_dbm_kinematics_single(tinit, rinit, vinit, gamma, winds)
+        # ends here
 
         pred = None
         if hit:
-
-            pred = implementation_obj.arrival(
+            pred, cme_distance_r = implementation_obj.arrival(
                 R=R,
                 vdrag=vdrag,
                 time_array=time_array,
@@ -274,7 +265,8 @@ def run_elevohi_new(track_times, track_elongs, params, implementation_obj):
             )
 
         if pred is None:
-            return pd.DataFrame()
+            dfs.append(pd.DataFrame())
+            continue
 
         _, _, prediction = functions.assess_prediction(
             pred,
@@ -379,7 +371,6 @@ def main_new(strudl_track_with_parameters_path, results_save_path, impl=None, co
             params=parameters_track,
             implementation_obj=impl,
         )
-
         valid_ensemble = False
         for ens in ensemble:
             if ens.empty:
@@ -423,10 +414,12 @@ if __name__ == "__main__":
 
             setup_config = {
                 "use_dbm_updated": False,
-                "use_vinit_donki_category": False,
+                "updated_dbm_vinit_computation": 'first',
+                "allow_multiple_dbm_fits": False,
                 "use_cme_hit_function_updated": False,
                 "use_arrival_computation_updated": False,
-                "allow_multiple_dbm_fits": False
+                "use_elevo_ensembles": False,
+                "kwargs_dbm": {"num_points": 3}
             }
         
         impl = make_implementation(use_baseline, setup_config)
@@ -435,7 +428,7 @@ if __name__ == "__main__":
             results_save_path=results_save_path,
             impl=impl,
             config=config)
-                
+
         results.append({'dt [h]': ensemble['dt [h]'].abs().mean(),
                         'dv [km/s]': ensemble['dv [km/s]'].abs().mean(),
                         'no prediction possible': no_pred,

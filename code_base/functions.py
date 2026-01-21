@@ -22,7 +22,8 @@ import sys
 import pdb
 import gc
 import copy
-from dataclasses import dataclass
+from numba import njit, prange
+from astropy import constants as const
 
 # Constants
 AU = const.au.to_value('km')
@@ -791,7 +792,7 @@ def DBMfitting(time, distance_au, prediction_path, det_plot, startfit = 1, endfi
     return gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata
 
 
-def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 0, endfit = 20, silent = 1, max_residual = 1.5, max_gamma = 2e-7, use_vinit_donki_cat=False, vinit_input=None):
+def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 0, silent = 1, max_residual = 1.5, max_gamma = 2e-7, compute_vinit='first', **kwargs):
     """ fit the ELCon time-distance track using the drag-based equation of motion from Vrsnak et al. (2013).
         This is an updated version of the DBMfitting function.
         Added:
@@ -800,6 +801,7 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
     """
     global  runnumber
 
+    # compute_vinit: first, mean_points, mean_rsun, mean_donki_cat
     # start end end points of fitting.
     # This was done manually so far, but should be implemented in a way that it is done automatically.
     # However, it might always be necessary that a forecaster reviews the fitting because not each HI kinematics can
@@ -809,59 +811,104 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
     # endfit = 18 -> default settings
     # Convert datetime values to seconds since the first element
 
-    distance_rsun = distance_au * AU / rsun
+    required_by_method_vinit = {
+        "first": set(),
+        "mean_points": {"num_points"},
+        "mean_rsun": {"cutoff_rsun"},
+        "mean_donki_cat": {"vinit_input"}
+    }
 
-        
-    time_num = (time - time[0]).total_seconds()
+    if compute_vinit not in required_by_method_vinit:
+        raise ValueError(f"Unknown method: {compute_vinit}")
+
+    required_kws = required_by_method_vinit[compute_vinit]
+    missing_kws = required_kws - kwargs.keys()
+
+    if missing_kws:
+        raise ValueError(f"Method '{compute_vinit}' requires parameters: {', '.join(sorted(missing_kws))}")
+    
+    distance_rsun = distance_au[startfit:] * AU / rsun
+    time_num = (time[startfit:] - time[startfit]).total_seconds()
 
     speedtime = time_num - time_num[0]
-    distance_km = distance_au * AU
-
-
-    #build time derivative from ELCon CME time-distance track
+    distance_km = distance_au[startfit:] * AU
     speed = np.gradient(distance_km, speedtime)
-    #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    #!!! How do we build the speed errors? In IDL this is done by the function DERIVSIG.
-    # In Python, I have no idea! -> This needs to be solved.
-    #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-    tinit = time[startfit]
-    rinit = distance_km[startfit]
+    if compute_vinit == 'first':
+        vinit_estimate = speed[0]
+        rinit = distance_km[0]
+        tinit = time[0]
 
-    if use_vinit_donki_cat:
-        if vinit_input is None:
-            raise ValueError("vinit_input must be provided when use_vinit_donki_cat=True")
+        xdata = speedtime.values
+        ydata = distance_km
+
+    elif compute_vinit == 'mean_points':
+        num_points = kwargs.get("num_points")
+        vinit_estimate = np.nanmean(speed[:num_points])
+        rinit = np.nanmean(distance_km[:num_points])
+        tinit = pd.DatetimeIndex([time[:num_points].mean()])[0]
+
+        inds_rinit = np.where(distance_km >= rinit)[0]
+        xdata = speedtime.values[inds_rinit[0]:]
+        ydata = distance_km[inds_rinit[0]:]
+
+    elif compute_vinit == 'mean_rsun':
+        cutoff_rsun = kwargs.get("cutoff_rsun")
+        inds = np.where(distance_rsun <= cutoff_rsun)[0]
+
+        if len(inds) > 0:
+            vinit_estimate = np.nanmean(speed[inds])
+            rinit = np.nanmean(distance_km[inds])
+            tinit = pd.DatetimeIndex([time[inds].mean()])[0]
+
+            inds_rinit = np.where(distance_km >= rinit)[0]
+            xdata = speedtime.values[inds_rinit[0]:]
+            ydata = distance_km[inds_rinit[0]:]
 
         else:
-            print('Using DONKI category to estimate vinit.')
+            print(f'No speed values found below {int(cutoff_rsun)} Rsun, using first value for vinit.')
+            vinit_estimate = speed[0]
+            rinit = distance_km[0]
+            tinit = time[0]
+            xdata = speedtime.values
+            ydata = distance_km
 
-            if vinit_input > 900:
-                vinit_donki_cat = 'fast'
-            else:
-                vinit_donki_cat = 'slow'
+    elif compute_vinit == 'mean_donki_cat':
+        vinit_input = kwargs.get("vinit_input")
 
-            print('DONKI category: ', vinit_donki_cat)
+        if vinit_input > 900:
+            vinit_donki_cat = 'fast'
+        else:
+            vinit_donki_cat = 'slow'
 
-            rsun_cutoff = 50 if vinit_donki_cat == 'slow' else 8.4
+        cutoff_rsun = 50 if vinit_donki_cat == 'slow' else 8.4
 
-    else:
-        rsun_cutoff = 50
+        inds = np.where(distance_rsun <= cutoff_rsun)[0]
 
-    init_inds = np.where(distance_rsun <= rsun_cutoff)[0]
-    if len(init_inds) > 0:
-        vinit_estimate = np.nanmean(speed[init_inds])
+        if len(inds) > 0:
+            vinit_estimate = np.nanmean(speed[inds])
+            rinit = np.nanmean(distance_km[inds])
+            tinit = pd.DatetimeIndex([time[inds].mean()])[0]
 
-    else:
-        print(f'No speed values found below {int(rsun_cutoff)} Rsun, using first value for vinit.')
-        vinit_estimate = speed[startfit]
+            inds_rinit = np.where(distance_km >= rinit)[0]
+            xdata = speedtime.values[inds_rinit[0]:]
+            ydata = distance_km[inds_rinit[0]:]
 
-    xdata = speedtime.values
-    ydata = distance_km
+        else:
+            print(f'No speed values found below {int(cutoff_rsun)} Rsun, using first value for vinit.')
+            vinit_estimate = speed[0]
+            rinit = distance_km[0]
+            tinit = time[0]         
+
+            xdata = speedtime.values
+            ydata = distance_km
 
     fit_vinit = False
     if fit_vinit:
         print('Fitting vinit as well.')
-    
+
+    xdata = speedtime.values
+    ydata = distance_km
     #testgamma = 1.7863506087704678e-08 
     #testwind  = 200
 
@@ -992,7 +1039,6 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
     print('')
 
         
-
     residuals2 = []
     for i in range(len(winds)):
         if success[i] != True:
@@ -1002,6 +1048,7 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
         if gamma[i] <= 0:
             continue
         if max_gamma >= np.abs(gamma[i]):
+            
             gamma_v.append(gamma[i])
             res_v.append(res[i]/rsun)
             winds_v.append(winds[i])
@@ -1015,6 +1062,7 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
             if det_plot:
                 ax.plot(distance_rsun, fitspeed[i,:], label='fit', linewidth=1, c=cmap.to_rgba(winds[i]))
         else:
+            print('Gamma too high for wind: ', winds[i])
             if silent == 0:
                 print('------------')
                 print('i: ',i)
@@ -1051,6 +1099,7 @@ def DBMfitting_updated(time, distance_au, prediction_path, det_plot, startfit = 
         res_valid = np.array(res_v)   
         winds_valid = np.array(winds_v)   
         min_res = np.argmin(np.abs(res_valid))
+
     else:
         print('No DBMfit possible for these model settings.')
         gamma_valid = [0]
@@ -2069,11 +2118,11 @@ def elevo_new(R, time_array, tnum, f, halfwidth, hit, delta_values, L1_r,L1_lon)
         
         hit = 1
         return {"target": "L1", "arrival time [UT]": arrtime_L1.strftime("%Y-%m-%d %H:%M"),
-                     "arrival speed [km/s]": int(round(arrspeed_L1)), "dt [h]": np.nan, "dv [km/s]": np.nan}
+                     "arrival speed [km/s]": int(round(arrspeed_L1)), "dt [h]": np.nan, "dv [km/s]": np.nan}, d_L1
    
     # print("------------------------------------")
 
-    return None
+    return None, None
 
 def compute_arrival(cme_r, cme_v, time_array, target_r):
     """
@@ -2290,3 +2339,77 @@ def does_cme_hit(delta, halfwidth, tol=0.0):
     tol_rad = np.deg2rad(tol)
 
     return np.abs(delta) < (halfwidth + tol_rad)
+
+@njit(fastmath=False, parallel=True)
+def compute_cme_ensemble(gamma, ambient_wind, speed_ensemble, timesteps, distance0):
+    """
+    Compute CME ensemble propagation (r and v) with Numba acceleration.
+
+    Parameters
+    ----------
+    gamma : 1D array (n_ensemble)
+    ambient_wind : 1D array (n_ensemble)
+    speed_ensemble : 1D array (n_ensemble)
+    timesteps : 1D array (kindays_in_min)
+    distance0 : float
+
+    Returns
+    -------
+    cme_r_ensemble : 2D array [kindays_in_min, n_ensemble]
+    cme_v_ensemble : 2D array [kindays_in_min, n_ensemble]
+    """
+
+    n_steps = timesteps.size
+    n_ens = gamma.size
+    cme_r_ensemble = np.empty((n_steps, n_ens))
+    cme_v_ensemble = np.empty((n_steps, n_ens))
+
+    gfac = gamma * 1e-7
+    for j in prange(n_ens):
+        v_amb = ambient_wind[j]
+        v0 = speed_ensemble[j]
+        accsign = 1.
+        if v0 < v_amb:
+            accsign = -1.
+
+        for i in range(n_steps):
+            t = timesteps[i]
+            term = accsign * gfac[j] * (v0 - v_amb) * t
+            cme_r_ensemble[i, j] = (
+                (accsign / gfac[j]) * np.log(1 + term)
+                + v_amb * t
+                + distance0
+            )
+
+            # term2 = accsign * gfac[j] * (v0 - v_amb) * t
+            cme_v_ensemble[i, j] = (
+                (v0 - v_amb) / (1 + term) + v_amb
+            )
+
+    return cme_r_ensemble, cme_v_ensemble
+
+def compute_dbm_kinematics_single(tinit, rinit, vinit, gamma, winds):
+
+    AU_in_km = const.au.to_value('km')
+    time_step = timedelta(minutes=10)
+    timegrid = 1440
+
+    time_array = [tinit + i * time_step for i in range(timegrid)]
+    tnum = [(t - tinit).total_seconds() for t in time_array]
+
+    vdrag = np.zeros(timegrid)
+    rdrag = np.zeros(timegrid)
+
+    accsign = -1 if vinit < winds else 1
+
+    for i in range(timegrid):
+        rdrag[i] = (accsign / gamma * np.log(1 + accsign * gamma * (vinit - winds) * tnum[i]) + winds * tnum[i] + rinit)
+        vdrag[i] = ((vinit - winds)/ (1 + accsign * gamma * (vinit - winds) * tnum[i]) + winds)
+
+        if not np.isfinite(rdrag[i]):
+            raise ValueError("Invalid DBM kinematics")
+
+    R = rdrag / AU_in_km
+
+    return R, vdrag, time_array, tnum
+

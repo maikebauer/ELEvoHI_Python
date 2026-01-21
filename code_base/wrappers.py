@@ -1,5 +1,7 @@
 import code_base.functions as functions
 import datetime
+import numpy as np
+from astropy import constants as const
 
 class DBMFit:
     def __init__(self,*,gamma, wind, tinit,rinit,vinit,residual,is_valid):
@@ -56,7 +58,6 @@ def run_dbm_fitting_wrapper(
     prediction_path,
     det_plot,
     silent,
-    vinit_input=None,
     setup_config=None
 ):
     """
@@ -64,13 +65,15 @@ def run_dbm_fitting_wrapper(
     """
 
     use_updated = False
-    use_vinit_donki_cat = None
     allow_multiple_dbm_fits = False
+    updated_dbm_vinit_computation = 'first'
+    kwargs_dbm = {}
 
     if setup_config is not None:
         use_updated = setup_config.get("use_dbm_updated", False)
-        use_vinit_donki_cat = setup_config.get("use_vinit_donki_category", False)
         allow_multiple_dbm_fits = setup_config.get("allow_multiple_dbm_fits", False)
+        updated_dbm_vinit_computation = setup_config.get("updated_dbm_vinit_computation", 'first')
+        kwargs_dbm = setup_config.get("kwargs_dbm", {})
 
     if use_updated:
         gamma_valid, winds_valid, res_valid, tinit, rinit, vinit, swspeed, xdata, ydata = functions.DBMfitting_updated(
@@ -79,10 +82,9 @@ def run_dbm_fitting_wrapper(
             prediction_path=prediction_path,
             det_plot=det_plot,
             startfit=startfit,
-            endfit=endfit,
             silent=silent,
-            use_vinit_donki_cat=use_vinit_donki_cat,
-            vinit_input=vinit_input
+            compute_vinit=updated_dbm_vinit_computation,
+            **kwargs_dbm
         )
 
     else:
@@ -161,18 +163,95 @@ def run_arrival_computation_wrapper(
     Unified arrival time computation interface for the pipeline.
     """
 
+    AU_in_km = const.au.to_value('km')
+
     use_updated = False
+    use_elevo_ensembles = False
 
     if setup_config is not None:
         use_updated = setup_config.get("use_arrival_computation_updated", False)
+        use_elevo_ensembles = setup_config.get("use_elevo_ensembles", False)
 
     if use_updated:
-        pred = functions.compute_arrival_wrapper(R, vdrag, time_array, L1_r)
+        d_target,_,_,_ = functions.elevo_analytic_new(R, f, halfwidth, delta_target)
+
+        if use_elevo_ensembles:
+            speed_target = vdrag
+        else:
+            d_target_diff = np.diff(d_target*AU_in_km, axis=0)
+            speed_target = d_target_diff / np.diff(tnum, axis=0)
+
+        pred = functions.compute_arrival_wrapper(d_target, speed_target, time_array, L1_r)
 
     else:
-        pred = functions.elevo_new(R, time_array, tnum, f, halfwidth, 1, delta_target, L1_r, L1_lon)
+        pred, d_target = functions.elevo_new(R, time_array, tnum, f, halfwidth, 1, delta_target, L1_r, L1_lon)
 
-    return pred
+    return pred, d_target
+
+def run_dbm_kinematics_wrapper(
+    *,
+    gamma,
+    winds,
+    tinit,
+    rinit,
+    vinit,
+    setup_config=None
+):
+
+    """
+    Unified DBM kinematics interface for the pipeline.
+    """
+
+    use_elevo_ensembles = False
+    use_arrival_computation_updated = False
+
+    if setup_config is not None:
+        use_elevo_ensembles = setup_config.get("use_elevo_ensembles", False)
+        use_arrival_computation_updated = setup_config.get("use_arrival_computation_updated", False)
+
+        if use_elevo_ensembles and not use_arrival_computation_updated:
+            raise ValueError("Elevo ensembles require the updated arrival computation.")
+        
+    if use_elevo_ensembles:
+        rng = np.random.default_rng(42)
+        n_ensemble = 1000
+        gamma_ens = np.abs(rng.normal(gamma*1e7,0.025,n_ensemble))
+        wind_ens = rng.normal(winds,50,n_ensemble)
+        speed_ens = rng.normal(vinit,50,n_ensemble)
+
+        time_step = datetime.timedelta(minutes=10)
+        timegrid = 1440
+        time_array = [tinit + i * time_step for i in range(timegrid)]
+        tnum = [(t - tinit).total_seconds() for t in time_array]
+
+        distance0 = rinit
+        cme_r_ensemble, cme_v_ensemble = functions.compute_cme_ensemble(gamma_ens, wind_ens, speed_ens, np.array(tnum), distance0)
+
+        cme_r_ensemble = cme_r_ensemble / const.au.to_value('km')  # convert back to AU
+
+        cme_r_mean = cme_r_ensemble.mean(1)
+        cme_r_std = cme_r_ensemble.std(1)
+        cme_v_mean = cme_v_ensemble.mean(1)
+        cme_v_std = cme_v_ensemble.std(1)
+
+        cme_r=np.zeros([len(cme_r_mean), 3])
+        cme_v=np.zeros([len(cme_v_mean), 3])
+
+        cme_r[:,0]= cme_r_mean # mean of cme distance ensemble
+        cme_r[:,1]=(cme_r_mean - 2*cme_r_std)  # lower limit of cme distance ensemble
+        cme_r[:,2]=(cme_r_mean + 2*cme_r_std) # upper limit of cme distance ensemble
+        cme_v[:,0]= cme_v_mean
+        cme_v[:,1]=(cme_v_mean - 2*cme_v_std)
+        cme_v[:,2]=(cme_v_mean + 2*cme_v_std)
+
+        R = cme_r
+        vdrag = cme_v
+        tnum = np.array(tnum)[:, np.newaxis]  # reshape for consistency
+        
+    else:
+        R, vdrag, time_array, tnum = functions.compute_dbm_kinematics_single(tinit, rinit, vinit, gamma, winds)
+    
+    return R, vdrag, time_array, tnum
 
 class BaselineImplementation:
 
@@ -183,7 +262,7 @@ class BaselineImplementation:
             setup_config=None
         )
 
-    def dbm_fit(self, *, time, distance_au, startcut, endcut, prediction_path, vinit):
+    def dbm_fit(self, *, time, distance_au, startcut, endcut, prediction_path):
         return run_dbm_fitting_wrapper(
             time=time,
             distance_au=distance_au,
@@ -192,10 +271,19 @@ class BaselineImplementation:
             prediction_path=prediction_path,
             det_plot=False,
             silent=1,
-            vinit_input=None,
             setup_config=None
         )
 
+    def dbm_kinematics(self, *, gamma, winds, tinit, rinit, vinit):
+        return run_dbm_kinematics_wrapper(
+            gamma=gamma,
+            winds=winds,
+            tinit=tinit,
+            rinit=rinit,
+            vinit=vinit,
+            setup_config=None
+        )
+    
     def arrival(self, *, R, vdrag, time_array, tnum, f, halfwidth, delta_target, L1_r, L1_lon):
         return run_arrival_computation_wrapper(
             R=R,
@@ -222,7 +310,7 @@ class UpdatedImplementation:
             setup_config=self.setup_config
         )
 
-    def dbm_fit(self, *, time, distance_au, startcut, endcut, prediction_path, vinit):
+    def dbm_fit(self, *, time, distance_au, startcut, endcut, prediction_path):
         return run_dbm_fitting_wrapper(
             time=time,
             distance_au=distance_au,
@@ -231,7 +319,16 @@ class UpdatedImplementation:
             prediction_path=prediction_path,
             det_plot=False,
             silent=1,
-            vinit_input=vinit,
+            setup_config=self.setup_config
+        )
+
+    def dbm_kinematics(self, *, gamma, winds, tinit, rinit, vinit):
+        return run_dbm_kinematics_wrapper(
+            gamma=gamma,
+            winds=winds,
+            tinit=tinit,
+            rinit=rinit,
+            vinit=vinit,
             setup_config=self.setup_config
         )
 
